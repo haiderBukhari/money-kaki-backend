@@ -233,7 +233,6 @@ exports.loginAdvisor = async (req, res) => {
     .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role')
     .eq('email_address', email)
     .eq('password', password)
-    .eq('role', 'advisor')
     .single();
 
   if (!advisor || (error && error.code === 'PGRST116')) {
