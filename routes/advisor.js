@@ -17,6 +17,7 @@ router.post('/reset-password', advisorController.resetPassword);
 
 router.get('/requests', advisorController.getInactiveAdvisors);
 router.put('/requests/:id', advisorController.toggleAdvisorStatus);
+router.post('/decline/:id', advisorController.declineAdvisor);
 
 router.get('/', advisorController.getAllAdvisors);
 router.put('/:id', advisorController.editAdvisor);

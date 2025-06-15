@@ -519,4 +519,39 @@ exports.resetPassword = async (req, res) => {
     console.error('Password reset error:', error);
     res.status(500).json({ error: 'Error resetting password' });
   }
+};
+
+exports.declineAdvisor = async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ error: 'Advisor id is required' });
+  }
+
+  // First check if advisor exists
+  const { data: advisor, error: findError } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', id)
+    .eq('role', 'advisor')
+    .single();
+
+  if (findError) {
+    return res.status(500).json({ error: findError.message });
+  }
+
+  if (!advisor) {
+    return res.status(404).json({ error: 'Advisor not found' });
+  }
+
+  // Delete the advisor
+  const { error: deleteError } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', id);
+
+  if (deleteError) {
+    return res.status(500).json({ error: deleteError.message });
+  }
+
+  res.json({ message: 'Advisor declined and removed successfully' });
 }; 
