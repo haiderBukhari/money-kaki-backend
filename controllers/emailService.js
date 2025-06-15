@@ -49,4 +49,54 @@ const sendAdvisorVerificationEmail = async (advisorName, email, code) => {
   }
 };
 
-module.exports = { sendAdvisorVerificationEmail }; 
+const sendPasswordResetEmail = async (advisorName, email, code) => {
+  if (!advisorName || !email || !code) {
+    return { error: 'Missing required fields.' };
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: process.env.EMAIL_HOST,
+      clientId: process.env.CLIENT_ID,
+      clientSecret: process.env.CLIENT_SECRET,
+      refreshToken: process.env.OAUTH_REFRESH_TOKEN,
+    },
+  });
+
+  const subject = 'Password Reset Code';
+  const emailBody = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+      <div style="background-color: #1976d2; padding: 20px; text-align: center;">
+        <h1 style="color: #fff; margin: 0;">Money Kaki</h1>
+      </div>
+      <div style="padding: 20px; color: #333;">
+        <h2>Hello ${advisorName},</h2>
+        <p>You have requested to reset your password. Please use the following code to reset your password:</p>
+        <div style="font-size: 32px; font-weight: bold; color: #1976d2; margin: 20px 0;">${code}</div>
+        <p>This code will expire in 10 minutes.</p>
+        <p>If you did not request this, please ignore this email and ensure your account is secure.</p>
+        <p>Best regards,<br>Money Kaki Team</p>
+      </div>
+    </div>
+  `;
+
+  const mailOptions = {
+    from: process.env.EMAIL_HOST,
+    to: email,
+    subject,
+    html: emailBody,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Password reset email sent:', info.response);
+    return { message: 'Password reset email sent.' };
+  } catch (error) {
+    console.error('Error sending password reset email:', error);
+    return { error: 'Failed to send password reset email' };
+  }
+};
+
+module.exports = { sendAdvisorVerificationEmail, sendPasswordResetEmail }; 
