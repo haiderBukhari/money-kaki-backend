@@ -334,8 +334,6 @@ exports.oauthLogin = async (req, res) => {
     const payload = ticket.getPayload();
     const { email, given_name, family_name, picture } = payload;
 
-    console.log(payload)
-
     let { data: advisor, error: findError } = await supabase
       .from('users')
       .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role')
@@ -352,7 +350,7 @@ exports.oauthLogin = async (req, res) => {
             email_address: email,
             profile_picture: picture,
             role: 'advisor',
-            status: 'active',
+            status: 'inactive',
             auth_source: 'google'
           }
         ])
