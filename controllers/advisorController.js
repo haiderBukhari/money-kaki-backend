@@ -150,9 +150,19 @@ exports.editAdvisor = async (req, res) => {
     return res.status(400).json({ error: 'No fields to update' });
   }
 
+  // Convert empty strings to null for numeric fields
+  const numericFields = ['credits', 'points', 'vocher_quantity'];
+  const processedFields = { ...updateFields };
+  
+  numericFields.forEach(field => {
+    if (processedFields[field] === '') {
+      processedFields[field] = null;
+    }
+  });
+
   const { data, error } = await supabase
     .from('users')
-    .update(updateFields)
+    .update(processedFields)
     .eq('id', id)
     .select();
 
