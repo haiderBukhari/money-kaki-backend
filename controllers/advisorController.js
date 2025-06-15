@@ -361,15 +361,19 @@ exports.oauthLogin = async (req, res) => {
             profile_picture: picture,
             role: 'advisor',
             status: 'inactive',
-            auth_source: 'google'
+            auth_source: 'google',
+            contact_number: null,
+            credits: 0,
+            points: 0,
+            vocher_quantity: 0
           }
         ])
-        .select();
+        .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role');
 
       if (createError) {
         return res.status(500).json({ error: 'Error creating advisor account' });
       }
-      advisor = newAdvisor;
+      advisor = newAdvisor[0];
     }
 
     const token = jwt.sign(
