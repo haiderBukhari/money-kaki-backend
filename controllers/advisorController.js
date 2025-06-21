@@ -199,7 +199,7 @@ exports.getAdvisorById = async (req, res) => {
 exports.getInactiveAdvisors = async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity')
+    .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, created_at')
     .eq('role', 'advisor')
     .eq('status', 'inactive');
 
