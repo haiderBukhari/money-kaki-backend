@@ -299,7 +299,7 @@ exports.getRole = async (req, res) => {
     // Get additional user details from database
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, full_name, email_address, role, status')
+      .select('id, full_name, email_address, role, status, profile_picture')
       .eq('id', id)
       .single();
 
@@ -316,7 +316,8 @@ exports.getRole = async (req, res) => {
       role: user.role,
       full_name: user.full_name,
       email_address: user.email_address,
-      status: user.status
+      status: user.status,
+      profile_picture: user.profile_picture
     });
   } catch (error) {
     res.status(500).json({ error: 'Error getting user role' });
