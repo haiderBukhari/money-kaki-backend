@@ -1,20 +1,19 @@
-const nodemailer = require('nodemailer');
+const FormData = require('form-data');
+const Mailgun = require('mailgun.js');
+
+const mailgun = new Mailgun(FormData);
+const mg = mailgun.client({
+  username: 'api',
+  key: process.env.API_KEY || 'API_KEY',
+  // url: process.env.MAILGUN_URL || undefined, // Uncomment if using EU domain
+});
+const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN || 'mail.first-4.com';
+const FROM_EMAIL = process.env.FROM_EMAIL || 'Mailgun Sandbox <postmaster@mail.first-4.com>';
 
 const sendAdvisorVerificationEmail = async (advisorName, email, code) => {
   if (!advisorName || !email || !code) {
     return { error: 'Missing required fields.' };
   }
-
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      type: 'OAuth2',
-      user: process.env.EMAIL_HOST,
-      clientId: process.env.CLIENT_ID,
-      clientSecret: process.env.CLIENT_SECRET,
-      refreshToken: process.env.OAUTH_REFRESH_TOKEN,
-    },
-  });
 
   const subject = 'Your Advisor Verification Code';
   const emailBody = `
@@ -32,16 +31,14 @@ const sendAdvisorVerificationEmail = async (advisorName, email, code) => {
     </div>
   `;
 
-  const mailOptions = {
-    from: process.env.EMAIL_HOST,
-    to: email,
-    subject,
-    html: emailBody,
-  };
-
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Verification email sent:', info.response);
+    const data = await mg.messages.create(MAILGUN_DOMAIN, {
+      from: FROM_EMAIL,
+      to: [email],
+      subject,
+      html: emailBody,
+    });
+    console.log('Verification email sent:', data);
     return { message: 'Verification email sent.' };
   } catch (error) {
     console.error('Error sending verification email:', error);
@@ -53,17 +50,6 @@ const sendPasswordResetEmail = async (advisorName, email, code) => {
   if (!advisorName || !email || !code) {
     return { error: 'Missing required fields.' };
   }
-
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      type: 'OAuth2',
-      user: process.env.EMAIL_HOST,
-      clientId: process.env.CLIENT_ID,
-      clientSecret: process.env.CLIENT_SECRET,
-      refreshToken: process.env.OAUTH_REFRESH_TOKEN,
-    },
-  });
 
   const subject = 'Password Reset Code';
   const emailBody = `
@@ -82,16 +68,14 @@ const sendPasswordResetEmail = async (advisorName, email, code) => {
     </div>
   `;
 
-  const mailOptions = {
-    from: process.env.EMAIL_HOST,
-    to: email,
-    subject,
-    html: emailBody,
-  };
-
   try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Password reset email sent:', info.response);
+    const data = await mg.messages.create(MAILGUN_DOMAIN, {
+      from: FROM_EMAIL,
+      to: [email],
+      subject,
+      html: emailBody,
+    });
+    console.log('Password reset email sent:', data);
     return { message: 'Password reset email sent.' };
   } catch (error) {
     console.error('Error sending password reset email:', error);
