@@ -263,6 +263,10 @@ exports.loginAdvisor = async (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
+  if (advisor.role !== 'advisor') {
+    return res.status(403).json({ error: 'User is not an advisor' });
+  }
+
   if (advisor.auth_source === 'google') {
     return res.status(403).json({ 
       error: 'This account was created using Google Sign-In. Please use Google Sign-In to access your account.' 
