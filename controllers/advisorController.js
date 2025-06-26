@@ -263,7 +263,11 @@ exports.loginAdvisor = async (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
 
-  if (advisor.role !== 'advisor') {
+  if (advisor.status === 'inactive') {
+    return res.status(403).json({ error: 'Your account is inactive. Please contact support to reactivate your account.' });
+  }
+
+  if (!(advisor.role === 'advisor' || advisor.role === 'admin')) {
     return res.status(403).json({ error: 'User is not an advisor' });
   }
 
