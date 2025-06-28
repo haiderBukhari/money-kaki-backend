@@ -20,6 +20,11 @@ function generateResetCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Helper to generate a random 6-digit referral code
+function generateReferralCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
 exports.createAdvisor = async (req, res) => {
   const { full_name, email_address, contact_number } = req.body;
   if (!full_name || !email_address || !contact_number) {
@@ -38,6 +43,7 @@ exports.createAdvisor = async (req, res) => {
   }
 
   const email_code = generateEmailCode();
+  const referral = generateReferralCode();
 
   // Insert new advisor
   const { data, error } = await supabase
@@ -48,6 +54,7 @@ exports.createAdvisor = async (req, res) => {
         email_address,
         contact_number,
         email_code,
+        referral,
         role: 'advisor'
       },
     ])

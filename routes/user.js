@@ -10,6 +10,8 @@ router.get('/login', userController.loginUser);
 router.post('/oauth-login', userController.oauthLogin);
 router.get('/role', verifyToken, userController.getRole);
 
+router.get('/profile', verifyToken, userController.getCurrentUserProfile);
+
 // Password reset routes
 router.post('/forgot-password', userController.requestPasswordReset);
 router.post('/verify-reset-code', userController.verifyResetCode);
@@ -18,6 +20,8 @@ router.post('/reset-password', userController.resetPassword);
 router.get('/requests', userController.getInactiveUsers);
 router.put('/requests/:id', userController.toggleUserStatus);
 router.post('/decline/:id', userController.declineUser);
+
+router.get('/assigned', verifyToken, userController.getUsersByRole);
 
 router.get('/', userController.getAllUsers);
 router.put('/:id', userController.editUser);

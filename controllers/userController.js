@@ -18,7 +18,7 @@ function generateResetCode() {
 }
 
 exports.createUser = async (req, res) => {
-  const { full_name, email_address, contact_number } = req.body;
+  const { full_name, email_address, contact_number, referal_code } = req.body;
   if (!full_name || !email_address || !contact_number) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -31,6 +31,21 @@ exports.createUser = async (req, res) => {
 
   if (existingUser) {
     return res.status(409).json({ error: 'User already exists with this email' });
+  }
+
+  // If referral code is provided, validate it
+  let mentorId = null;
+  if (referal_code) {
+    const { data: mentor, error: mentorError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('referral', referal_code)
+      .single();
+
+    if (mentorError || !mentor) {
+      return res.status(400).json({ error: 'Invalid referral code' });
+    }
+    mentorId = mentor.id;
   }
 
   const email_code = generateEmailCode();
@@ -52,13 +67,106 @@ exports.createUser = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
-  // Send verification email (reuse advisor email for now)
+  if (mentorId) {
+    const { error: assignmentError } = await supabase
+      .from('assigned_users')
+      .insert([
+        {
+          mentor_id: mentorId,
+          user_id: data[0].id
+        }
+      ]);
+
+    if (assignmentError) {
+      await supabase.from('users').delete().eq('id', data[0].id);
+      return res.status(500).json({ error: 'Failed to create user assignment' });
+    }
+
+    // Increment total_assigned for the advisor (referral assignment)
+    const { data: advisor, error: advisorFetchError } = await supabase
+      .from('users')
+      .select('total_assigned')
+      .eq('id', mentorId)
+      .single();
+
+    if (advisorFetchError) {
+      // If we can't fetch advisor data, clean up the assignment
+      await supabase.from('assigned_users').delete().eq('user_id', data[0].id);
+      await supabase.from('users').delete().eq('id', data[0].id);
+      return res.status(500).json({ error: 'Failed to fetch advisor data' });
+    }
+
+    const newTotalAssigned = (advisor.total_assigned || 0) + 1;
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ total_assigned: newTotalAssigned })
+      .eq('id', mentorId);
+
+    if (updateError) {
+
+      await supabase.from('assigned_users').delete().eq('user_id', data[0].id);
+      await supabase.from('users').delete().eq('id', data[0].id);
+      return res.status(500).json({ error: 'Failed to update advisor assignment count' });
+
+    }
+  } else {
+
+    const { data: advisors, error: advisorError } = await supabase
+      .from('users')
+      .select('id, total_assigned, created_at')
+      .eq('role', 'advisor')
+      .eq('status', 'active')
+      .order('total_assigned', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (advisorError) {
+      await supabase.from('users').delete().eq('id', data[0].id);
+      return res.status(500).json({ error: 'Failed to find available advisors' });
+    }
+
+    if (advisors && advisors.length > 0) {
+      const selectedAdvisor = advisors[0];
+
+      const { error: assignmentError } = await supabase
+        .from('assigned_users')
+        .insert([
+          {
+            mentor_id: selectedAdvisor.id,
+            user_id: data[0].id
+          }
+        ]);
+
+      if (assignmentError) {
+        await supabase.from('users').delete().eq('id', data[0].id);
+        return res.status(500).json({ error: 'Failed to create automatic user assignment' });
+      }
+
+      // Increment total_assigned for the selected advisor
+      const newTotalAssigned = (selectedAdvisor.total_assigned || 0) + 1;
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ total_assigned: newTotalAssigned })
+        .eq('id', selectedAdvisor.id);
+
+      if (updateError) {
+        // If update fails, we should clean up the assignment
+        await supabase.from('assigned_users').delete().eq('user_id', data[0].id);
+        await supabase.from('users').delete().eq('id', data[0].id);
+        return res.status(500).json({ error: 'Failed to update advisor assignment count' });
+      }
+
+      mentorId = selectedAdvisor.id;
+    }
+  }
+
   const emailResult = await sendAdvisorVerificationEmail(full_name, email_address, email_code);
   if (emailResult.error) {
     return res.status(500).json({ error: emailResult.error });
   }
 
-  res.status(201).json({ message: 'User created. Verification code sent to email.', user: data[0] });
+  res.status(201).json({ 
+    message: 'User created. Verification code sent to email.', 
+  });
 };
 
 exports.verifyEmail = async (req, res) => {
@@ -564,4 +672,93 @@ exports.declineUser = async (req, res) => {
   }
 
   res.json({ message: 'User declined and removed successfully' });
+};
+
+// Get users based on requester role
+exports.getUsersByRole = async (req, res) => {
+  try {
+    const userRole = req.user.role; // From JWT token
+    const userId = req.user.id; // From JWT token
+
+    if (userRole === 'admin') {
+      // Admin gets all users with role 'user' only
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, full_name, email_address, contact_number')
+        .eq('role', 'user')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Transform the data to include default values
+      const users = data.map(user => ({
+        id: user.id,
+        full_name: user.full_name,
+        email_address: user.email_address,
+        contact_number: user.contact_number,
+        income: 0,
+        expense: 0,
+        points: 0,
+        vocher: 0
+      }));
+
+      res.json({ users });
+    } else if (userRole === 'advisor') {
+
+      const { data: assignedUsers, error: assignedError } = await supabase
+        .from('assigned_users')
+        .select(`
+          user_id,
+          users!assigned_users_user_id_fkey (
+            id,
+            full_name,
+            email_address,
+            contact_number
+          )
+        `)
+        .eq('mentor_id', userId);
+
+      if (assignedError) throw assignedError;
+
+      // Transform the data to match the expected format
+      const users = assignedUsers.map(assignment => ({
+        id: assignment.users.id,
+        full_name: assignment.users.full_name,
+        email_address: assignment.users.email_address,
+        contact_number: assignment.users.contact_number,
+        income: 0,
+        expense: 0,
+        points: 0,
+        vocher: 0
+      }));
+
+      res.json({ users });
+    } else {
+      return res.status(403).json({ error: 'Access denied. Admin or Advisor role required.' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get current user profile
+exports.getCurrentUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id; // From JWT token
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('referral, full_name, contact_number, password, profile_picture, role, id')
+      .eq('id', userId)
+      .single();
+
+    if (error) throw error;
+    if (!data) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({ profile: data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 }; 

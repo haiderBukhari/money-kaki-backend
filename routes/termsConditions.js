@@ -8,4 +8,4 @@ router.post('/create', termsConditionsController.createTermsConditions);
 // Get Latest Terms & Conditions
 router.get('/latest', termsConditionsController.getLatestTermsConditions);
 
-module.exports = router; 
+module.exports = router;
