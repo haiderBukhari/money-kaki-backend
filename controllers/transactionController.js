@@ -36,8 +36,8 @@ exports.createTransaction = async (req, res) => {
         },
       ],
       mode: "payment",
-      success_url: "http://localhost:3000/payment-success?session_id={CHECKOUT_SESSION_ID}",
-      cancel_url: "http://localhost:3000/payment-cancel?session_id={CHECKOUT_SESSION_ID}",
+      success_url: "https://moneykaki.vercel.app/payment-success",
+      cancel_url: "https://moneykaki.vercel.app/payment-failed",
       payment_intent_data: {
         metadata: {
           user_id: user_id || 'unknown'
