@@ -125,7 +125,6 @@ exports.stripeWebhook = async (req, res) => {
         console.log(`Unhandled event type ${event.type} at ${(new Date()).toISOString()}`);
     }
 
-    // Send a 200 response to acknowledge receipt of the event
     res.json({ received: true, error: false });
   } catch (err) {
     console.error('Error handling webhook:', err);
