@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 
+// Check if Stripe secret key is available
 if (!process.env.STRIPE_SECRET_KEY) {
   console.error('STRIPE_SECRET_KEY environment variable is not set!');
 }
