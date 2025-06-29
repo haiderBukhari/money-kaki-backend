@@ -9,6 +9,7 @@ router.post('/create-password', advisorController.createPassword);
 router.get('/login', advisorController.loginAdvisor);
 router.post('/oauth-login', advisorController.oauthLogin);
 router.get('/role', verifyToken, advisorController.getRole);
+router.get('/credits', verifyToken, advisorController.getAdvisorCredits);
 
 // Password reset routes
 router.post('/forgot-password', advisorController.requestPasswordReset);

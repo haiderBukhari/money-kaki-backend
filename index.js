@@ -12,14 +12,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-
-app.use((req, res, next) => {
-  if (req.originalUrl === '/api/transactions/webhook') {
-    next();
-  } else {
-    express.json()(req, res, next);
-  }
-});
+app.use(express.json());
 
 app.get('/', (req, res) => {
   res.send('API is running');

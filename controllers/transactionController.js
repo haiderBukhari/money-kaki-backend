@@ -8,7 +8,8 @@ if (!process.env.STRIPE_SECRET_KEY) {
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY );
 
 exports.createTransaction = async (req, res) => {
-  const { amount, user_id } = req.body;
+  const { amount } = req.body;
+  const user_id = req.user.id;
   
   if (!amount) {
     return res.status(400).json({ error: 'Amount is required' });
@@ -16,6 +17,10 @@ exports.createTransaction = async (req, res) => {
 
   if (typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({ error: 'Amount must be a positive number' });
+  }
+
+  if (!user_id) {
+    return res.status(401).json({ error: 'User not authenticated' });
   }
 
   try {
@@ -40,7 +45,7 @@ exports.createTransaction = async (req, res) => {
       cancel_url: "https://moneykaki.vercel.app/payment-failed",
       payment_intent_data: {
         metadata: {
-          user_id: user_id || 'unknown'
+          user_id: user_id
         }
       }
     });

@@ -584,4 +584,41 @@ exports.declineAdvisor = async (req, res) => {
   }
 
   res.json({ message: 'Advisor declined and removed successfully' });
+};
+
+exports.getAdvisorCredits = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const { data: advisor, error } = await supabase
+      .from('users')
+      .select('id, full_name, email_address, credits, points, vocher_quantity')
+      .eq('id', userId)
+      .eq('role', 'advisor')
+      .single();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    if (!advisor) {
+      return res.status(404).json({ error: 'Advisor not found' });
+    }
+
+    res.json({
+      id: advisor.id,
+      full_name: advisor.full_name,
+      email_address: advisor.email_address,
+      credits: advisor.credits || 0,
+      points: advisor.points || 0,
+      vocher_quantity: advisor.vocher_quantity || 0
+    });
+  } catch (error) {
+    console.error('Get advisor credits error:', error);
+    res.status(500).json({ error: 'Error fetching advisor credits' });
+  }
 }; 
