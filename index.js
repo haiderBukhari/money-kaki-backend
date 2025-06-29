@@ -23,6 +23,7 @@ app.use('/api/merchant', merchantRoutes);
 app.use('/api/rewards', require('./routes/reward'));
 app.use('/api/wrappings', require('./routes/wrapping'));
 app.use('/api/challenges', require('./routes/challenge'));
+app.use('/api/transactions', require('./routes/transaction'));
 app.use('/api/user', userRoutes);
 app.use('/api/privacy-policy', privacyPolicyRoutes);
 app.use('/api/terms-conditions', termsConditionsRoutes);
