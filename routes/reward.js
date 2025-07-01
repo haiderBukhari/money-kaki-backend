@@ -5,6 +5,8 @@ const rewardController = require('../controllers/rewardController');
 // Basic CRUD
 router.post('/', rewardController.createReward);
 router.get('/', rewardController.getAllRewards);
+router.get('/available-quantity', rewardController.getAllRewardsWithAvailableQuantity);
+
 router.get('/:id', rewardController.getRewardById);
 router.put('/:id', rewardController.updateReward);
 router.delete('/:id', rewardController.deleteReward);
@@ -15,5 +17,7 @@ router.post('/:id/code', rewardController.addRewardCode);
 router.post('/:id/codes', rewardController.addRewardCodesBulk);
 // Remove a code
 router.delete('/:id/codes', rewardController.removeRewardCode);
+
+// Get all rewards with available quantity
 
 module.exports = router; 

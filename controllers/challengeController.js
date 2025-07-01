@@ -2,17 +2,24 @@ const supabase = require('../supabaseClient');
 
 // Create a new challenge
 exports.createChallenge = async (req, res) => {
-  const { user_id, challenge_title } = req.body;
+  const { user_id, challenge_title, reward_id, quantity, overall_price, points } = req.body;
   if (!user_id || !challenge_title) {
     return res.status(400).json({ error: 'User ID and challenge title are required' });
   }
 
   const created_by = req.user.id; // Get from JWT token
 
+  // Build insert object with only provided fields
+  const insertObj = { user_id, challenge_title, created_by };
+  if (reward_id !== undefined) insertObj.reward_id = reward_id;
+  if (quantity !== undefined) insertObj.quantity = quantity;
+  if (overall_price !== undefined) insertObj.overall_price = overall_price;
+  if (points !== undefined) insertObj.points = points;
+
   try {
     const { data, error } = await supabase
       .from('challenges')
-      .insert([{ user_id, challenge_title, created_by }])
+      .insert([insertObj])
       .select();
 
     if (error) throw error;

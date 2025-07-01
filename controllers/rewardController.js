@@ -1,5 +1,9 @@
 const supabase = require('../supabaseClient');
 
+// NOTE FOR FRONTEND: Reward codes are now stored as an array of objects: [{ code: string, is_redeemed: boolean }]
+// Example: codes: [ { code: "ABC123", is_redeemed: false }, ... ]
+// Update your frontend logic to handle this structure.
+
 // Create a new reward (no codes)
 exports.createReward = async (req, res) => {
   const { picture, name, price } = req.body;
@@ -88,7 +92,10 @@ exports.addRewardCode = async (req, res) => {
     const { data: reward, error: fetchError } = await supabase.from('rewards').select('codes').eq('id', id).single();
     if (fetchError) throw fetchError;
     if (!reward) return res.status(404).json({ error: 'Reward not found' });
-    const updatedCodes = [...(reward.codes || []), code];
+    const updatedCodes = [
+      ...(reward.codes || []),
+      { code, is_redeemed: false }
+    ];
     const { data: updatedReward, error: updateError } = await supabase.from('rewards').update({ codes: updatedCodes, updated_at: new Date().toISOString() }).eq('id', id).select();
     if (updateError) throw updateError;
     res.json({ message: 'Code added successfully', reward: updatedReward[0] });
@@ -108,7 +115,12 @@ exports.addRewardCodesBulk = async (req, res) => {
     const { data: reward, error: fetchError } = await supabase.from('rewards').select('codes').eq('id', id).single();
     if (fetchError) throw fetchError;
     if (!reward) return res.status(404).json({ error: 'Reward not found' });
-    const updatedCodes = [...(reward.codes || []), ...codes];
+    // Accepts array of strings or array of objects
+    const newCodes = codes.map(c => typeof c === 'string' ? { code: c, is_redeemed: false } : c);
+    const updatedCodes = [
+      ...(reward.codes || []),
+      ...newCodes
+    ];
     const { data: updatedReward, error: updateError } = await supabase.from('rewards').update({ codes: updatedCodes, updated_at: new Date().toISOString() }).eq('id', id).select();
     if (updateError) throw updateError;
     res.json({ message: 'Codes added successfully', reward: updatedReward[0] });
@@ -119,25 +131,72 @@ exports.addRewardCodesBulk = async (req, res) => {
 
 // Remove a code from a reward's codes array
 exports.removeRewardCode = async (req, res) => {
-    const { id } = req.params;
-    const { code } = req.body;
-    if (!code) {
-        return res.status(400).json({ error: 'Code is required' });
-    }
-    try {
-        const { data: reward, error: fetchError } = await supabase.from('rewards').select('codes').eq('id', id).single();
-        if (fetchError) throw fetchError;
-        if (!reward) return res.status(404).json({ error: 'Reward not found' });
+  const { id } = req.params;
+  const { code } = req.body;
+  if (!code) {
+    return res.status(400).json({ error: 'Code is required' });
+  }
+  try {
+    const { data: reward, error: fetchError } = await supabase.from('rewards').select('codes').eq('id', id).single();
+    if (fetchError) throw fetchError;
+    if (!reward) return res.status(404).json({ error: 'Reward not found' });
 
-        const updatedCodes = (reward.codes || []).filter(c => c !== code);
-        if (updatedCodes.length === reward.codes.length) {
-            return res.status(404).json({ error: 'Code not found in reward' });
-        }
-
-        const { data: updatedReward, error: updateError } = await supabase.from('rewards').update({ codes: updatedCodes, updated_at: new Date().toISOString() }).eq('id', id).select();
-        if (updateError) throw updateError;
-        res.json({ message: 'Code removed successfully', reward: updatedReward[0] });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    const updatedCodes = (reward.codes || []).filter(cObj => cObj.code !== code);
+    if (updatedCodes.length === (reward.codes || []).length) {
+      return res.status(404).json({ error: 'Code not found in reward' });
     }
+
+    const { data: updatedReward, error: updateError } = await supabase.from('rewards').update({ codes: updatedCodes, updated_at: new Date().toISOString() }).eq('id', id).select();
+    if (updateError) throw updateError;
+    res.json({ message: 'Code removed successfully', reward: updatedReward[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// (Optional) Add a function to mark a code as redeemed
+exports.redeemRewardCode = async (req, res) => {
+  const { id } = req.params;
+  const { code } = req.body;
+  if (!code) {
+    return res.status(400).json({ error: 'Code is required' });
+  }
+  try {
+    const { data: reward, error: fetchError } = await supabase.from('rewards').select('codes').eq('id', id).single();
+    if (fetchError) throw fetchError;
+    if (!reward) return res.status(404).json({ error: 'Reward not found' });
+    let found = false;
+    const updatedCodes = (reward.codes || []).map(cObj => {
+      if (cObj.code === code) {
+        found = true;
+        return { ...cObj, is_redeemed: true };
+      }
+      return cObj;
+    });
+    if (!found) {
+      return res.status(404).json({ error: 'Code not found in reward' });
+    }
+    const { data: updatedReward, error: updateError } = await supabase.from('rewards').update({ codes: updatedCodes, updated_at: new Date().toISOString() }).eq('id', id).select();
+    if (updateError) throw updateError;
+    res.json({ message: 'Code redeemed successfully', reward: updatedReward[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get all rewards with name, price, and available quantity (codes not redeemed)
+exports.getAllRewardsWithAvailableQuantity = async (req, res) => {
+  try {
+    const { data: rewards, error } = await supabase.from('rewards').select('id, name, price, codes');
+    if (error) throw error;
+    const result = (rewards || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      price: r.price,
+      available_quantity: Array.isArray(r.codes) ? r.codes.filter(c => c && c.is_redeemed === false).length : 0
+    }));
+    res.json({ rewards: result });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 }; 
