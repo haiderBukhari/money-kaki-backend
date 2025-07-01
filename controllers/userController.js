@@ -761,4 +761,98 @@ exports.getCurrentUserProfile = async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+};
+
+// Get current advisor and all advisors for a user
+exports.getUserAdvisors = async (req, res) => {
+  const { userId } = req.params;
+  if (!userId) {
+    return res.status(400).json({ error: 'User id is required' });
+  }
+  try {
+    // Get current advisor assignment
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('assigned_users')
+      .select('mentor_id, users!assigned_users_mentor_id_fkey(full_name)')
+      .eq('user_id', userId)
+      .single();
+
+    let currentAdvisor = null;
+    if (assignment && assignment.mentor_id) {
+      currentAdvisor = {
+        id: assignment.mentor_id,
+        full_name: assignment.users?.full_name || null
+      };
+    }
+
+    // Get all advisors
+    const { data: advisors, error: advisorsError } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('role', 'advisor')
+      .eq('status', 'active');
+
+    if (advisorsError) throw advisorsError;
+
+    res.json({ currentAdvisor, advisors });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Change advisor assignment for a user (admin only)
+exports.changeUserAdvisor = async (req, res) => {
+  const { userId, advisorId } = req.params;
+  // Only admin can call this
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Only admin can change advisor assignment.' });
+  }
+  if (!userId || !advisorId) {
+    return res.status(400).json({ error: 'User id and advisor id are required' });
+  }
+  try {
+    // Get current assignment
+    const { data: currentAssignment, error: assignmentError } = await supabase
+      .from('assigned_users')
+      .select('mentor_id')
+      .eq('user_id', userId)
+      .single();
+
+    const oldAdvisorId = currentAssignment?.mentor_id;
+
+    // Remove current assignment
+    await supabase.from('assigned_users').delete().eq('user_id', userId);
+
+    // Insert new assignment
+    const { error: insertError } = await supabase
+      .from('assigned_users')
+      .insert([{ mentor_id: advisorId, user_id: userId }]);
+    if (insertError) throw insertError;
+
+    // Update total_assigned for old advisor (decrement)
+    if (oldAdvisorId) {
+      const { data: oldAdvisor, error: oldFetchError } = await supabase
+        .from('users')
+        .select('total_assigned')
+        .eq('id', oldAdvisorId)
+        .single();
+      if (!oldFetchError && oldAdvisor) {
+        const newTotal = Math.max((oldAdvisor.total_assigned || 1) - 1, 0);
+        await supabase.from('users').update({ total_assigned: newTotal }).eq('id', oldAdvisorId);
+      }
+    }
+    // Update total_assigned for new advisor (increment)
+    const { data: newAdvisor, error: newFetchError } = await supabase
+      .from('users')
+      .select('total_assigned')
+      .eq('id', advisorId)
+      .single();
+    if (!newFetchError && newAdvisor) {
+      const newTotal = (newAdvisor.total_assigned || 0) + 1;
+      await supabase.from('users').update({ total_assigned: newTotal }).eq('id', advisorId);
+    }
+    res.json({ message: 'Advisor assignment updated successfully.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 }; 

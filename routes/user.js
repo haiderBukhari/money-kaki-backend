@@ -28,4 +28,7 @@ router.put('/:id', userController.editUser);
 router.get('/:id', userController.getUserById);
 router.delete('/:id', userController.deleteUser);
 
+router.get('/:userId/advisors', userController.getUserAdvisors);
+router.put('/:userId/assign/:advisorId', verifyToken, userController.changeUserAdvisor);
+
 module.exports = router; 
