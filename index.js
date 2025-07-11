@@ -6,6 +6,7 @@ const merchantRoutes = require('./routes/merchant');
 const userRoutes = require('./routes/user');
 const privacyPolicyRoutes = require('./routes/privacyPolicy');
 const termsConditionsRoutes = require('./routes/termsConditions');
+const userFinancesRoutes = require('./routes/userFinances');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +19,7 @@ app.get('/', (req, res) => {
   res.send('API is running');
 });
 
+app.use('/api/user-finances', userFinancesRoutes);
 app.use('/api/advisor', advisorRoutes);
 app.use('/api/merchant', merchantRoutes);
 app.use('/api/rewards', require('./routes/reward'));
