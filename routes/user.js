@@ -10,9 +10,9 @@ router.get('/login', userController.loginUser);
 router.post('/oauth-login', userController.oauthLogin);
 router.get('/role', verifyToken, userController.getRole);
 
-router.get('/profile', verifyToken, userController.getCurrentUserProfile);
+router.get('/profile', verifyToken, userController.getProfile);
+router.put('/profile', verifyToken, userController.updateProfile);
 
-// Password reset routes
 router.post('/forgot-password', userController.requestPasswordReset);
 router.post('/verify-reset-code', userController.verifyResetCode);
 router.post('/reset-password', userController.resetPassword);
@@ -21,14 +21,17 @@ router.get('/requests', userController.getInactiveUsers);
 router.put('/requests/:id', userController.toggleUserStatus);
 router.post('/decline/:id', userController.declineUser);
 
+router.get('/points', verifyToken, userController.getPoints);
 router.get('/assigned', verifyToken, userController.getUsersByRole);
 
 router.get('/', userController.getAllUsers);
 router.put('/:id', userController.editUser);
 router.get('/:id', userController.getUserById);
 router.delete('/:id', userController.deleteUser);
+router.delete('/delete-account', verifyToken, userController.deleteOwnAccount);
 
 router.get('/:userId/advisors', userController.getUserAdvisors);
 router.put('/:userId/assign/:advisorId', verifyToken, userController.changeUserAdvisor);
+router.post('/send-verification-code', verifyToken, userController.sendVerificationCode);
 
 module.exports = router; 

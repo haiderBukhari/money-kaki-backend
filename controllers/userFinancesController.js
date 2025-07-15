@@ -1,4 +1,5 @@
 const supabase = require('../supabaseClient');
+const { askClaude } = require('../utils/textagent');
 
 // Helper to get or create user_finances row
 async function getOrCreateUserFinances(userId) {
@@ -163,6 +164,79 @@ exports.addTransaction = async (req, res) => {
   }
 };
 
+// AI-powered transaction creation (prompt-based)
+exports.createTransactionAI = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { prompt } = req.body;
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
+    // AI prompt for transaction extraction
+    const aiPrompt = `Extract all transactions from the following user statement. For each transaction, extract the amount, type (income, expense, transfer, investment), title, description, category, and date (YYYY-MM-DD). Return only JSON in the format: { "transactions": [ { "amount": <number>, "type": <string>, "title": <string>, "description": <string>, "category": <string>, "date": <string> }, ... ] }. User statement: "${prompt}"`;
+    const aiResponse = await askClaude(aiPrompt);
+    let transactions;
+    try {
+      transactions = JSON.parse(aiResponse.content[0].text).transactions;
+    } catch (e) {
+      return res.status(400).json({ error: 'Could not extract transactions from prompt.' });
+    }
+    if (!Array.isArray(transactions) || transactions.length === 0) {
+      return res.status(400).json({ error: 'No transactions found in prompt.' });
+    }
+    // Insert each transaction
+    const inserts = transactions.map(tx => ({
+      user_id: userId,
+      amount: tx.amount,
+      type: tx.type,
+      title: tx.title,
+      description: tx.description,
+      category: tx.category,
+      date: tx.date
+    }));
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert(inserts)
+      .select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json({ transactions: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Direct transaction creation (structured data)
+exports.createTransaction = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {amount, type, title, description, category, date}  = req.body;
+    if (!amount || !type || !title || !category || !date) return res.status(400).json({ error: 'Transaction data required' });
+    // Validate and map
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert({user_id: userId, amount, type, title, description, category, date})
+      .select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json({ transactions: data });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// Get all transactions for the user
+exports.getTransactions = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('date', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ transactions: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.getCategories = async (req, res) => {
   const categories = [
     "Food & Drinks",
@@ -191,4 +265,21 @@ exports.getGoals = async (req, res) => {
     "Vacation"
   ];
   res.json({ goals });
+};
+
+// Get current user's monthly income
+exports.getIncome = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data, error } = await supabase
+      .from('user_finances')
+      .select('monthly_income')
+      .eq('user_id', userId)
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'No income data found for user' });
+    res.json({ monthly_income: data.monthly_income });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }; 

@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.56.0",
     "@supabase/supabase-js": "^2.49.10",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",

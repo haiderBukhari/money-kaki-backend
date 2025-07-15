@@ -10,8 +10,14 @@ router.post('/add-goals', verifyToken, userFinancesController.addGoals);
 router.post('/add-amount-to-save', verifyToken, userFinancesController.addAmountToSave);
 router.post('/add-today-spend', verifyToken, userFinancesController.addTodaySpend);
 router.post('/add-transaction', verifyToken, userFinancesController.addTransaction);
+// AI-powered transaction creation (prompt-based)
+router.post('/transactions/create-ai', verifyToken, userFinancesController.createTransactionAI);
+// Direct transaction creation (structured data)
+router.post('/transactions/create', verifyToken, userFinancesController.createTransaction);
+router.get('/transactions', verifyToken, userFinancesController.getTransactions);
 router.get('/categories', verifyToken, userFinancesController.getCategories);
 router.get('/goals', verifyToken, userFinancesController.getGoals);
+router.get('/get-income', verifyToken, userFinancesController.getIncome);
 
 
 module.exports = router; 

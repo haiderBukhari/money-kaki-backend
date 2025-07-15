@@ -856,3 +856,172 @@ exports.changeUserAdvisor = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 }; 
+
+// Get combined user profile (users + user_finances)
+exports.getProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    // Get user info
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('full_name, email_address, contact_number')
+      .eq('id', userId)
+      .single();
+    if (userError) return res.status(500).json({ error: userError.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    // Get monthly_income
+    const { data: finances, error: finError } = await supabase
+      .from('user_finances')
+      .select('monthly_income')
+      .eq('user_id', userId)
+      .single();
+    if (finError) return res.status(500).json({ error: finError.message });
+    res.json({
+      full_name: user.full_name,
+      email_address: user.email_address,
+      contact_number: user.contact_number,
+      monthly_income: finances ? finances.monthly_income : null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update combined user profile (users + user_finances)
+exports.updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { full_name, email_address, contact_number, monthly_income } = req.body;
+    // Update users table
+    const updateFields = {};
+    if (full_name !== undefined) updateFields.full_name = full_name;
+    if (email_address !== undefined) updateFields.email_address = email_address;
+    if (contact_number !== undefined) updateFields.contact_number = contact_number;
+    let userUpdate, userError;
+    if (Object.keys(updateFields).length > 0) {
+      ({ data: userUpdate, error: userError } = await supabase
+        .from('users')
+        .update(updateFields)
+        .eq('id', userId)
+        .select('full_name, email_address, contact_number')
+        .single());
+      if (userError) return res.status(500).json({ error: userError.message });
+    } else {
+      // Get current user if not updating
+      ({ data: userUpdate, error: userError } = await supabase
+        .from('users')
+        .select('full_name, email_address, contact_number')
+        .eq('id', userId)
+        .single());
+      if (userError) return res.status(500).json({ error: userError.message });
+    }
+    // Update user_finances table
+    let financesUpdate, finError;
+    if (monthly_income !== undefined) {
+      ({ data: financesUpdate, error: finError } = await supabase
+        .from('user_finances')
+        .update({ monthly_income })
+        .eq('user_id', userId)
+        .select('monthly_income')
+        .single());
+      if (finError) return res.status(500).json({ error: finError.message });
+    } else {
+      ({ data: financesUpdate, error: finError } = await supabase
+        .from('user_finances')
+        .select('monthly_income')
+        .eq('user_id', userId)
+        .single());
+      if (finError) return res.status(500).json({ error: finError.message });
+    }
+    res.json({
+      full_name: userUpdate.full_name,
+      email_address: userUpdate.email_address,
+      contact_number: userUpdate.contact_number,
+      monthly_income: financesUpdate ? financesUpdate.monthly_income : null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}; 
+
+// Send a 4-digit code to the user's email address
+exports.sendVerificationCode = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    // Get user's email and name
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('full_name, email_address')
+      .eq('id', userId)
+      .single();
+    if (userError) return res.status(500).json({ error: userError.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    // Generate 4-digit code
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    // Save code to user (email_code)
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ email_code: code })
+      .eq('id', userId);
+    if (updateError) return res.status(500).json({ error: updateError.message });
+    // Send email
+    const { sendAdvisorVerificationEmail } = require('./emailService');
+    const emailResult = await sendAdvisorVerificationEmail(user.full_name, user.email_address, code);
+    if (emailResult.error) return res.status(500).json({ error: emailResult.error });
+    res.json({ message: 'Verification code sent to email.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}; 
+
+// Delete the current user's account and log leaving reason
+exports.deleteOwnAccount = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { leaving_reason } = req.body;
+    if (!leaving_reason) return res.status(400).json({ error: 'leaving_reason is required' });
+    // Get user info
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('full_name, email_address')
+      .eq('id', userId)
+      .single();
+    if (userError) return res.status(500).json({ error: userError.message });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    // Insert leaving reason
+    const { error: reasonError } = await supabase
+      .from('leaving_reason')
+      .insert({
+        full_name: user.full_name,
+        email: user.email_address,
+        leaving_reason
+      });
+    if (reasonError) return res.status(500).json({ error: reasonError.message });
+    // Delete user
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', userId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ message: 'User account deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}; 
+
+// Get current user's points
+exports.getPoints = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data, error } = await supabase
+      .from('users')
+      .select('points')
+      .eq('id', userId)
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'No points data found for user' });
+    res.json({ points: data.points });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}; 

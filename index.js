@@ -19,6 +19,7 @@ app.get('/', (req, res) => {
   res.send('API is running');
 });
 
+// userFinancesRoutes includes /transactions/create and /transactions for transaction AI create/read
 app.use('/api/user-finances', userFinancesRoutes);
 app.use('/api/advisor', advisorRoutes);
 app.use('/api/merchant', merchantRoutes);
@@ -30,6 +31,7 @@ app.use('/api/reward-assignee', require('./routes/rewardAssignee'));
 app.use('/api/user', userRoutes);
 app.use('/api/privacy-policy', privacyPolicyRoutes);
 app.use('/api/terms-conditions', termsConditionsRoutes);
+app.use('/api/goals-savings', require('./routes/goals'));
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
