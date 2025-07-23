@@ -208,7 +208,7 @@ exports.createPassword = async (req, res) => {
   // Check secret
   const { data: user, error: findError } = await supabase
     .from('users')
-    .select('id, secret')
+    .select('id, secret, role, email_address')
     .eq('email_address', email_address)
     .single();
   if (!user || user.secret !== secret) {
@@ -225,7 +225,18 @@ exports.createPassword = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
-  res.json({ message: 'Password set successfully', user: data[0] });
+  // Generate JWT token (like loginUser)
+  const token = jwt.sign(
+    {
+      id: user.id,
+      role: user.role,
+      email: user.email_address
+    },
+    process.env.JWT_SECRET || 'your-secret-key',
+    { expiresIn: '30d' }
+  );
+
+  res.json({ message: 'Password set successfully', user: data[0], token, role: user.role });
 };
 
 exports.getAllUsers = async (req, res) => {
@@ -374,6 +385,8 @@ exports.loginUser = async (req, res) => {
     .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password')
     .eq('email_address', email)
     .single();
+
+  console.log(email);
 
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password' });
