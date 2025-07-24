@@ -17,9 +17,18 @@ function generateResetCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Helper to get full_name from first_name and last_name
+function getFullName(user) {
+  if (!user) return '';
+  if (user.first_name && user.last_name) return `${user.first_name} ${user.last_name}`;
+  if (user.first_name) return user.first_name;
+  if (user.last_name) return user.last_name;
+  return '';
+}
+
 exports.createUser = async (req, res) => {
-  const { full_name, email_address, contact_number, referal_code } = req.body;
-  if (!full_name || !email_address || !contact_number) {
+  const { first_name, last_name, email_address, country_code, number, referal_code } = req.body;
+  if (!first_name || !last_name || !email_address || !country_code || !number) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -54,9 +63,11 @@ exports.createUser = async (req, res) => {
     .from('users')
     .insert([
       {
-        full_name,
+        first_name,
+        last_name,
         email_address,
-        contact_number,
+        country_code,
+        number,
         email_code,
         role: 'user'
       },
@@ -159,7 +170,7 @@ exports.createUser = async (req, res) => {
     }
   }
 
-  const emailResult = await sendAdvisorVerificationEmail(full_name, email_address, email_code);
+  const emailResult = await sendAdvisorVerificationEmail(first_name, email_address, email_code);
   if (emailResult.error) {
     return res.status(500).json({ error: emailResult.error });
   }
@@ -215,28 +226,39 @@ exports.createPassword = async (req, res) => {
     return res.status(400).json({ error: 'Invalid secret' });
   }
 
-  const { data, error } = await supabase
+  // Update password
+  const { error } = await supabase
     .from('users')
     .update({ password })
-    .eq('email_address', email_address)
-    .select();
+    .eq('email_address', email_address);
 
   if (error) {
     return res.status(500).json({ error: error.message });
   }
 
+  // Fetch user with login fields
+  const { data: userData, error: userFetchError } = await supabase
+    .from('users')
+    .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password')
+    .eq('email_address', email_address)
+    .single();
+
+  if (userFetchError) {
+    return res.status(500).json({ error: userFetchError.message });
+  }
+
   // Generate JWT token (like loginUser)
   const token = jwt.sign(
     {
-      id: user.id,
-      role: user.role,
-      email: user.email_address
+      id: userData.id,
+      role: userData.role,
+      email: userData.email_address
     },
     process.env.JWT_SECRET || 'your-secret-key',
     { expiresIn: '30d' }
   );
 
-  res.json({ message: 'Password set successfully', user: data[0], token, role: user.role });
+  res.json({ message: 'Password set successfully', user: userData, token, role: userData.role });
 };
 
 exports.getAllUsers = async (req, res) => {
@@ -382,11 +404,9 @@ exports.loginUser = async (req, res) => {
 
   const { data: user, error: findError } = await supabase
     .from('users')
-    .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password')
+    .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password')
     .eq('email_address', email)
     .single();
-
-  console.log(email);
 
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password' });
@@ -416,7 +436,7 @@ exports.loginUser = async (req, res) => {
     { expiresIn: '30d' }
   );
 
-  res.json({ user, token, role: user.role });
+  res.json({ message: 'Login successful', user, token, role: user.role });
 };
 
 exports.getRole = async (req, res) => {
@@ -877,7 +897,7 @@ exports.getProfile = async (req, res) => {
     // Get user info
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('full_name, email_address, contact_number')
+      .select('first_name, last_name, email_address, country_code, number')
       .eq('id', userId)
       .single();
     if (userError) return res.status(500).json({ error: userError.message });
@@ -890,9 +910,11 @@ exports.getProfile = async (req, res) => {
       .single();
     if (finError) return res.status(500).json({ error: finError.message });
     res.json({
-      full_name: user.full_name,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      country_code: user.country_code,
+      number: user.number,
       email_address: user.email_address,
-      contact_number: user.contact_number,
       monthly_income: finances ? finances.monthly_income : null
     });
   } catch (err) {
@@ -904,26 +926,28 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { full_name, email_address, contact_number, monthly_income } = req.body;
+    const { first_name, last_name, email_address, country_code, number, monthly_income } = req.body;
     // Update users table
     const updateFields = {};
-    if (full_name !== undefined) updateFields.full_name = full_name;
+    if (first_name !== undefined) updateFields.first_name = first_name;
+    if (last_name !== undefined) updateFields.last_name = last_name;
     if (email_address !== undefined) updateFields.email_address = email_address;
-    if (contact_number !== undefined) updateFields.contact_number = contact_number;
+    if (country_code !== undefined) updateFields.country_code = country_code;
+    if (number !== undefined) updateFields.number = number;
     let userUpdate, userError;
     if (Object.keys(updateFields).length > 0) {
       ({ data: userUpdate, error: userError } = await supabase
         .from('users')
         .update(updateFields)
         .eq('id', userId)
-        .select('full_name, email_address, contact_number')
+        .select('first_name, last_name, email_address, country_code, number')
         .single());
       if (userError) return res.status(500).json({ error: userError.message });
     } else {
       // Get current user if not updating
       ({ data: userUpdate, error: userError } = await supabase
         .from('users')
-        .select('full_name, email_address, contact_number')
+        .select('first_name, last_name, email_address, country_code, number')
         .eq('id', userId)
         .single());
       if (userError) return res.status(500).json({ error: userError.message });
@@ -947,9 +971,11 @@ exports.updateProfile = async (req, res) => {
       if (finError) return res.status(500).json({ error: finError.message });
     }
     res.json({
-      full_name: userUpdate.full_name,
+      first_name: userUpdate.first_name,
+      last_name: userUpdate.last_name,
+      country_code: userUpdate.country_code,
+      number: userUpdate.number,
       email_address: userUpdate.email_address,
-      contact_number: userUpdate.contact_number,
       monthly_income: financesUpdate ? financesUpdate.monthly_income : null
     });
   } catch (err) {
@@ -964,7 +990,7 @@ exports.sendVerificationCode = async (req, res) => {
     // Get user's email and name
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('full_name, email_address')
+      .select('first_name, last_name, email_address, country_code, number')
       .eq('id', userId)
       .single();
     if (userError) return res.status(500).json({ error: userError.message });
@@ -979,7 +1005,7 @@ exports.sendVerificationCode = async (req, res) => {
     if (updateError) return res.status(500).json({ error: updateError.message });
     // Send email
     const { sendAdvisorVerificationEmail } = require('./emailService');
-    const emailResult = await sendAdvisorVerificationEmail(user.full_name, user.email_address, code);
+    const emailResult = await sendAdvisorVerificationEmail(getFullName(user), user.email_address, code);
     if (emailResult.error) return res.status(500).json({ error: emailResult.error });
     res.json({ message: 'Verification code sent to email.' });
   } catch (err) {
@@ -996,7 +1022,7 @@ exports.deleteOwnAccount = async (req, res) => {
     // Get user info
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('full_name, email_address')
+      .select('first_name, last_name, email_address, country_code, number')
       .eq('id', userId)
       .single();
     if (userError) return res.status(500).json({ error: userError.message });
@@ -1005,7 +1031,7 @@ exports.deleteOwnAccount = async (req, res) => {
     const { error: reasonError } = await supabase
       .from('leaving_reason')
       .insert({
-        full_name: user.full_name,
+        full_name: getFullName(user),
         email: user.email_address,
         leaving_reason
       });
