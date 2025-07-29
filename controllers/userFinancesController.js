@@ -282,4 +282,50 @@ exports.getIncome = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+};
+
+// Get user finance status and missing fields
+exports.getUserFinanceStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { data, error } = await supabase
+      .from('user_finances')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    
+    if (error) {
+      // User finance record doesn't exist
+      return res.json({
+        is_missing: true,
+        content_missing: [
+          "monthly_income",
+          "monthly_expense", 
+          "selected_category",
+          "goal_to_achieve",
+          "amount_to_save",
+          "today_spend",
+          "transaction"
+        ]
+      });
+    }
+
+    // Check which fields are missing (null or 0)
+    const missingFields = [];
+    if (!data.monthly_income || data.monthly_income === 0) missingFields.push("monthly_income");
+    if (!data.monthly_expense || data.monthly_expense === 0) missingFields.push("monthly_expense");
+    if (!data.selected_category) missingFields.push("selected_category");
+    if (!data.goal_to_achieve) missingFields.push("goal_to_achieve");
+    if (!data.amount_to_save || data.amount_to_save === 0) missingFields.push("amount_to_save");
+    if (!data.today_spend || data.today_spend === 0) missingFields.push("today_spend");
+    if (!data.transaction) missingFields.push("transaction");
+
+    res.json({
+      is_missing: missingFields.length > 0,
+      content_missing: missingFields,
+      user_finances: data
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }; 

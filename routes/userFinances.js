@@ -18,6 +18,7 @@ router.get('/transactions', verifyToken, userFinancesController.getTransactions)
 router.get('/categories', verifyToken, userFinancesController.getCategories);
 router.get('/goals', verifyToken, userFinancesController.getGoals);
 router.get('/get-income', verifyToken, userFinancesController.getIncome);
+router.get('/user-finance-status', verifyToken, userFinancesController.getUserFinanceStatus);
 
 
 module.exports = router; 
