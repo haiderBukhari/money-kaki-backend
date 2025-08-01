@@ -717,19 +717,34 @@ exports.getUsersByRole = async (req, res) => {
       // Admin gets all users with role 'user' only
       const { data, error } = await supabase
         .from('users')
-        .select('id, full_name, email_address, contact_number')
+        .select('id, first_name, last_name, email_address, country_code, number')
         .eq('role', 'user')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      // Transform the data to include default values
+      // Get user finances for all users
+      const userIds = data.map(user => user.id);
+      const { data: financesData, error: financesError } = await supabase
+        .from('user_finances')
+        .select('user_id, monthly_income')
+        .in('user_id', userIds);
+
+      if (financesError) throw financesError;
+
+      // Create a map of user_id to monthly_income
+      const financesMap = {};
+      financesData.forEach(finance => {
+        financesMap[finance.user_id] = finance.monthly_income || 0;
+      });
+
+      // Transform the data to include actual income values
       const users = data.map(user => ({
         id: user.id,
-        full_name: user.full_name,
+        full_name: `${user.first_name} ${user.last_name}`,
         email_address: user.email_address,
-        contact_number: user.contact_number,
-        income: 0,
+        contact_number: user.country_code + " " + user.number,
+        income: financesMap[user.id] || 0,
         expense: 0,
         points: 0,
         vocher: 0
@@ -744,22 +759,39 @@ exports.getUsersByRole = async (req, res) => {
           user_id,
           users!assigned_users_user_id_fkey (
             id,
-            full_name,
+            first_name,
+            last_name,
             email_address,
-            contact_number
+            country_code,
+            number
           )
         `)
         .eq('mentor_id', userId);
 
       if (assignedError) throw assignedError;
 
+      // Get user finances for assigned users
+      const userIds = assignedUsers.map(assignment => assignment.users.id);
+      const { data: financesData, error: financesError } = await supabase
+        .from('user_finances')
+        .select('user_id, monthly_income')
+        .in('user_id', userIds);
+
+      if (financesError) throw financesError;
+
+      // Create a map of user_id to monthly_income
+      const financesMap = {};
+      financesData.forEach(finance => {
+        financesMap[finance.user_id] = finance.monthly_income || 0;
+      });
+
       // Transform the data to match the expected format
       const users = assignedUsers.map(assignment => ({
         id: assignment.users.id,
-        full_name: assignment.users.full_name,
+        full_name: `${assignment.users.first_name} ${assignment.users.last_name}`,
         email_address: assignment.users.email_address,
-        contact_number: assignment.users.contact_number,
-        income: 0,
+        contact_number: assignment.users.country_code + " " + assignment.users.number,
+        income: financesMap[assignment.users.id] || 0,
         expense: 0,
         points: 0,
         vocher: 0
@@ -897,9 +929,11 @@ exports.getProfile = async (req, res) => {
     // Get user info
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('first_name, last_name, email_address, country_code, number')
+      .select('first_name, last_name, email_address, country_code, number, referral')
       .eq('id', userId)
       .single();
+
+    console.log(user);
     if (userError) return res.status(500).json({ error: userError.message });
     if (!user) return res.status(404).json({ error: 'User not found' });
     // Get monthly_income
@@ -907,12 +941,18 @@ exports.getProfile = async (req, res) => {
       .from('user_finances')
       .select('monthly_income')
       .eq('user_id', userId)
-      .single();
-    if (finError) return res.status(500).json({ error: finError.message });
+      .maybeSingle();
+    
+    // Don't return error if no finances record exists, just use null
+    if (finError && finError.code !== 'PGRST116') {
+      return res.status(500).json({ error: finError.message });
+    }
+    
     res.json({
       first_name: user.first_name,
       last_name: user.last_name,
       country_code: user.country_code,
+      referral: user.referral,
       number: user.number,
       email_address: user.email_address,
       monthly_income: finances ? finances.monthly_income : null
@@ -955,20 +995,43 @@ exports.updateProfile = async (req, res) => {
     // Update user_finances table
     let financesUpdate, finError;
     if (monthly_income !== undefined) {
-      ({ data: financesUpdate, error: finError } = await supabase
+      // First check if user_finances record exists
+      const { data: existingFinances } = await supabase
         .from('user_finances')
-        .update({ monthly_income })
+        .select('id')
         .eq('user_id', userId)
-        .select('monthly_income')
-        .single());
+        .maybeSingle();
+      
+      if (existingFinances) {
+        // Update existing record
+        ({ data: financesUpdate, error: finError } = await supabase
+          .from('user_finances')
+          .update({ monthly_income })
+          .eq('user_id', userId)
+          .select('monthly_income')
+          .single());
+      } else {
+        // Create new record
+        ({ data: financesUpdate, error: finError } = await supabase
+          .from('user_finances')
+          .insert({ user_id: userId, monthly_income })
+          .select('monthly_income')
+          .single());
+      }
+      
       if (finError) return res.status(500).json({ error: finError.message });
     } else {
+      // Just get the existing record
       ({ data: financesUpdate, error: finError } = await supabase
         .from('user_finances')
         .select('monthly_income')
         .eq('user_id', userId)
-        .single());
-      if (finError) return res.status(500).json({ error: finError.message });
+        .maybeSingle());
+      
+      // Don't return error if no finances record exists
+      if (finError && finError.code !== 'PGRST116') {
+        return res.status(500).json({ error: finError.message });
+      }
     }
     res.json({
       first_name: userUpdate.first_name,
@@ -1064,3 +1127,174 @@ exports.getPoints = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 }; 
+
+// Get user notifications (rewards where is_approved=true or is_redeemed=true)
+exports.getUserNotifications = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const { data, error } = await supabase
+      .from('rewards_assignee')
+      .select(`
+        *,
+        rewards (
+          id,
+          picture,
+          name,
+          price
+        )
+      `)
+      .eq('assignee_id', userId)
+      .or('is_approved.eq.true')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ notifications: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Redeem user reward (check approval, provide code, update is_redeemed, prevent duplicates)
+exports.redeemUserReward = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { reward_id } = req.body;
+    
+    if (!reward_id) {
+      return res.status(400).json({ error: 'reward_id is required' });
+    }
+
+    // Get the reward assignment
+    const { data: rewardAssignment, error: assignmentError } = await supabase
+      .from('rewards_assignee')
+      .select(`
+        *,
+        rewards (
+          id,
+          picture,
+          name,
+          price,
+          codes
+        )
+      `)
+      .eq('id', reward_id)
+      .eq('assignee_id', userId)
+      .single();
+
+    if (assignmentError) {
+      return res.status(500).json({ error: assignmentError.message });
+    }
+
+    if (!rewardAssignment) {
+      return res.status(404).json({ error: 'Reward assignment not found' });
+    }
+
+    // // Check if already redeemed
+    // if (rewardAssignment.is_redeemed) {
+    //   return res.status(400).json({ error: 'Reward already redeemed' });
+    // }
+
+    // Check if approved by advisor
+    if (rewardAssignment.is_approved) {
+      // Get the redeemed codes from reward_code field
+      let redeemedCodes = rewardAssignment.reward_code;
+
+      if (redeemedCodes.length === 0) {
+        return res.status(400).json({ error: 'No redeemed codes available for this reward' });
+      }
+
+      // Update reward assignment as redeemed
+      const { error: updateAssignmentError } = await supabase
+        .from('rewards_assignee')
+        .update({ is_redeemed: true })
+        .eq('id', reward_id);
+
+      if (updateAssignmentError) {
+        return res.status(500).json({ error: updateAssignmentError.message });
+      }
+
+      return res.json({ 
+        message: 'Reward has already been approved and redeemed successfully',
+        codes: redeemedCodes,
+        reward: rewardAssignment
+      });
+    }
+
+    // Reward is not approved, check if sent to advisor
+    if (rewardAssignment.sent_to_advisor) {
+      return res.json({ 
+        message: 'Waiting for advisor to approve the reward',
+        status: 'pending_approval'
+      });
+    }
+
+    // Reward not sent to advisor yet, send it now
+    const { error: updateSentError } = await supabase
+      .from('rewards_assignee')
+      .update({ sent_to_advisor: true })
+      .eq('id', reward_id);
+
+    if (updateSentError) {
+      return res.status(500).json({ error: updateSentError.message });
+    }
+
+    return res.json({ 
+      message: 'Reward sent to advisor for approval',
+      status: 'sent_to_advisor'
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}; 
+
+// Get all advisor rewards for the current user
+exports.getUserAdvisorRewards = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // First get all reward assignments
+    const { data: assignments, error: assignmentError } = await supabase
+      .from('rewards_assignee')
+      .select('*')
+      .eq('assignee_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (assignmentError) {
+      return res.status(500).json({ error: assignmentError.message });
+    }
+
+    // Get unique reward IDs
+    const rewardIds = [...new Set(assignments.map(assignment => assignment.reward_id))];
+    
+    // Fetch reward details separately
+    const { data: rewards, error: rewardsError } = await supabase
+      .from('rewards')
+      .select('id, picture, name')
+      .in('id', rewardIds);
+
+    if (rewardsError) {
+      return res.status(500).json({ error: rewardsError.message });
+    }
+
+    // Create a map of reward_id to reward details
+    const rewardsMap = {};
+    rewards.forEach(reward => {
+      rewardsMap[reward.id] = reward;
+    });
+
+    // Combine assignments with reward details
+    const rewardsWithDetails = assignments.map(assignment => ({
+      ...assignment,
+      reward: rewardsMap[assignment.reward_id] || null
+    }));
+
+    res.json({ rewards: rewardsWithDetails });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

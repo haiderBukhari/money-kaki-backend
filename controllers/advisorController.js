@@ -160,7 +160,7 @@ exports.editAdvisor = async (req, res) => {
   // Convert empty strings to null for numeric fields
   const numericFields = ['credits', 'points', 'vocher_quantity'];
   const processedFields = { ...updateFields };
-  
+
   numericFields.forEach(field => {
     if (processedFields[field] === '') {
       processedFields[field] = null;
@@ -279,8 +279,8 @@ exports.loginAdvisor = async (req, res) => {
   }
 
   if (advisor.auth_source === 'google') {
-    return res.status(403).json({ 
-      error: 'This account was created using Google Sign-In. Please use Google Sign-In to access your account.' 
+    return res.status(403).json({
+      error: 'This account was created using Google Sign-In. Please use Google Sign-In to access your account.'
     });
   }
 
@@ -294,7 +294,7 @@ exports.loginAdvisor = async (req, res) => {
   }
 
   const token = jwt.sign(
-    { 
+    {
       id: advisor.id,
       role: advisor.role,
       email: advisor.email_address
@@ -310,11 +310,11 @@ exports.getRole = async (req, res) => {
   try {
     // The user info is already attached to req.user by the middleware
     const { id, role } = req.user;
-    
+
     // Get additional user details from database
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, full_name, email_address, role, status, profile_picture')
+      .select('id, first_name, last_name, country_code, referral, number, email_address, role, status, profile_picture')
       .eq('id', id)
       .single();
 
@@ -329,10 +329,14 @@ exports.getRole = async (req, res) => {
     res.json({
       id: user.id,
       role: user.role,
-      full_name: user.full_name,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      country_code: user.country_code,
+      referral: user.referral,
+      number: user.number,
       email_address: user.email_address,
       status: user.status,
-      profile_picture: user.profile_picture
+      profile_picture: user.profile_picture,
     });
   } catch (error) {
     res.status(500).json({ error: 'Error getting user role' });
@@ -356,7 +360,7 @@ exports.oauthLogin = async (req, res) => {
       idToken: tokens.id_token,
       audience: process.env.OAUTH_CLIENT_ID
     });
-    
+
     const payload = ticket.getPayload();
     const { email, given_name, family_name, picture } = payload;
 
@@ -393,7 +397,7 @@ exports.oauthLogin = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { 
+      {
         id: advisor.id,
         role: 'advisor',
         email: advisor.email_address
@@ -410,9 +414,9 @@ exports.oauthLogin = async (req, res) => {
 
   } catch (error) {
     console.error('Google OAuth login error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Error during Google authentication',
-      details: error.response?.data || error.message 
+      details: error.response?.data || error.message
     });
   }
 };
@@ -436,14 +440,14 @@ exports.requestPasswordReset = async (req, res) => {
     }
 
     if (advisor.auth_source === 'google') {
-      return res.status(403).json({ 
-        error: 'This account uses Google Sign-In. Please use Google Sign-In to access your account.' 
+      return res.status(403).json({
+        error: 'This account uses Google Sign-In. Please use Google Sign-In to access your account.'
       });
     }
 
     // Generate reset code
     const resetCode = generateResetCode();
-    const resetCodeExpiry = new Date(Date.now() + 10 * 60 * 1000); 
+    const resetCodeExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
     // Save reset code and expiry to database
     const { error: updateError } = await supabase
@@ -589,7 +593,7 @@ exports.declineAdvisor = async (req, res) => {
 exports.getAdvisorCredits = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     if (!userId) {
       return res.status(401).json({ error: 'User not authenticated' });
     }
@@ -598,7 +602,7 @@ exports.getAdvisorCredits = async (req, res) => {
       .from('users')
       .select('id, full_name, email_address, credits, points, vocher_quantity')
       .eq('id', userId)
-      .eq('role', 'advisor')
+      // .eq('role', 'advisor')
       .single();
 
     if (error) {
@@ -621,4 +625,265 @@ exports.getAdvisorCredits = async (req, res) => {
     console.error('Get advisor credits error:', error);
     res.status(500).json({ error: 'Error fetching advisor credits' });
   }
-}; 
+};
+
+// Get all rewards assigned to the advisor (assignee_id from token)
+exports.getAdvisorRewards = async (req, res) => {
+  try {
+    const assigneeId = req.user.id; // This is the advisor's ID
+
+    const { data, error } = await supabase
+      .from('rewards_assignee')
+      .select(`
+        *,
+        rewards (
+          id,
+          picture,
+          name,
+          price,
+          codes
+        )
+      `)
+      .eq('assignee_id', assigneeId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ rewards: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Redeem advisor reward (complex logic with points deduction and code assignment)
+exports.redeemAdvisorReward = async (req, res) => {
+  try {
+    const assigneeId = req.user.id; // This is the advisor's ID
+    const { reward_id } = req.body;
+
+    if (!reward_id) {
+      return res.status(400).json({ error: 'reward_id is required' });
+    }
+
+    // Step 1: Get the reward assignment by created_by and id
+    const { data: assignment, error: assignmentError } = await supabase
+      .from('rewards_assignee')
+      .select('*')
+      .eq('id', reward_id)
+      .eq('created_by', assigneeId)
+      .single();
+
+    if(assignment.is_approved) {
+      return res.status(400).json({ error: 'Reward has already been approved' });
+    }
+
+    if (assignmentError) {
+      return res.status(500).json({ error: assignmentError.message });
+    }
+
+    if (!assignment) {
+      return res.status(404).json({ error: 'Reward assignment not found' });
+    }
+
+    // Step 2: Get the reward details to check price and codes
+    const { data: reward, error: rewardError } = await supabase
+      .from('rewards')
+      .select('*')
+      .eq('id', assignment.reward_id)
+      .single();
+
+    if (rewardError) {
+      return res.status(500).json({ error: rewardError.message });
+    }
+
+    if (!reward) {
+      return res.status(404).json({ error: 'Reward not found' });
+    }
+
+    // Step 3: Parse codes and check availability
+    let codes = [];
+    
+    // Check if reward.codes exists and handle both string and object formats
+    if (reward.codes) {
+      if (typeof reward.codes === 'string' && reward.codes.trim() !== '') {
+        try {
+          codes = JSON.parse(reward.codes);
+          // Ensure codes is an array
+          if (!Array.isArray(codes)) {
+            codes = [];
+          }
+        } catch (e) {
+          console.error('Error parsing reward codes:', e);
+          console.error('Raw codes value:', reward.codes);
+          return res.status(500).json({ error: 'Invalid codes format in database' });
+        }
+      } else if (Array.isArray(reward.codes)) {
+        // Codes is already an array
+        codes = reward.codes;
+      } else {
+        console.error('Unexpected codes format:', typeof reward.codes, reward.codes);
+        return res.status(500).json({ error: 'Invalid codes format in database' });
+      }
+    }
+
+    const availableCodes = codes.filter(code => code && !code.is_redeemed);
+    if (availableCodes.length < assignment.quantity) {
+      return res.status(400).json({ 
+        error: `Not enough codes available. Need ${assignment.quantity}, but only ${availableCodes.length} available.` 
+      });
+    }
+
+    // Step 4: Calculate total points needed
+    const rewardPrice = parseFloat(reward.price) || 0;
+    const totalPointsNeeded = rewardPrice * assignment.quantity;
+
+    // Step 5: Check if advisor has enough credits
+    const { data: advisor, error: advisorError } = await supabase
+      .from('users')
+      .select('credits')
+      .eq('id', assigneeId)
+      .single();
+
+    if (advisorError) {
+      return res.status(500).json({ error: advisorError.message });
+    }
+
+    if (!advisor) {
+      return res.status(404).json({ error: 'Advisor not found' });
+    }
+
+    if (advisor.credits < totalPointsNeeded) {
+      return res.status(400).json({ 
+        error: `Insufficient credits. Need ${totalPointsNeeded} credits, but only have ${advisor.credits} credits.` 
+      });
+    }
+
+    // Step 6: Select codes to redeem (take first N available codes)
+    const codesToRedeem = availableCodes.slice(0, assignment.quantity);
+    const redeemedCodes = [];
+
+    // Step 7: Mark selected codes as redeemed
+    codesToRedeem.forEach(codeToRedeem => {
+      const codeIndex = codes.findIndex(code => code.code === codeToRedeem.code);
+      if (codeIndex !== -1) {
+        codes[codeIndex].is_redeemed = true;
+        redeemedCodes.push(codeToRedeem.code);
+      }
+    });
+
+    // Step 8: Update rewards table with new codes array
+    const { error: updateRewardError } = await supabase
+      .from('rewards')
+      .update({ codes: codes }) // Store as JSONB object, not string
+      .eq('id', reward.id);
+
+    if (updateRewardError) {
+      return res.status(500).json({ error: updateRewardError.message });
+    }
+
+    // Step 9: Deduct credits from advisor
+    const newCredits = advisor.credits - totalPointsNeeded;
+    const { error: updateCreditsError } = await supabase
+      .from('users')
+      .update({ credits: newCredits })
+      .eq('id', assigneeId);
+
+    if (updateCreditsError) {
+      return res.status(500).json({ error: updateCreditsError.message });
+    }
+
+    // Step 10: Update reward assignment
+    const { error: updateAssignmentError } = await supabase
+      .from('rewards_assignee')
+      .update({ 
+        is_approved: true,
+        reward_code: redeemedCodes // Store as JSONB array, not string
+      })
+      .eq('id', reward_id);
+
+    if (updateAssignmentError) {
+      return res.status(500).json({ error: updateAssignmentError.message });
+    }
+
+    res.json({ 
+      message: 'Reward redeemed successfully',
+      redeemed_codes: redeemedCodes,
+      credits_deducted: totalPointsNeeded,
+      remaining_credits: newCredits,
+      assignment: {
+        ...assignment,
+        is_approved: true,
+        reward_code: redeemedCodes
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get advisor notifications (rewards where sent_to_advisor=true and is_approved=false OR is_approved=true)
+exports.getAdvisorNotifications = async (req, res) => {
+  try {
+    const assigneeId = req.user.id; // This is the advisor's ID
+
+    // First get all reward assignments
+    const { data: assignments, error: assignmentError } = await supabase
+      .from('rewards_assignee')
+      .select(`
+        *,
+        rewards (
+          id,
+          picture,
+          name,
+          price
+        )
+      `)
+      .eq('created_by', assigneeId)
+      .eq('sent_to_advisor', true)
+      .order('created_at', { ascending: false });
+
+    console.log(assigneeId);
+
+    if (assignmentError) {
+      return res.status(500).json({ error: assignmentError.message });
+    }
+
+    // Get unique user IDs from assignments
+    const userIds = [...new Set(assignments.map(assignment => assignment.assignee_id))];
+
+    // Fetch user details separately
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email_address, country_code, number')
+      .in('id', userIds);
+
+    if (usersError) {
+      return res.status(500).json({ error: usersError.message });
+    }
+
+    // Create a map of user_id to user details
+    const usersMap = {};
+    users.forEach(user => {
+      usersMap[user.id] = user;
+    });
+
+    // Transform data to include user details and status
+    const notifications = assignments.map(item => ({
+      ...item,
+      user: usersMap[item.assignee_id] ? {
+        id: usersMap[item.assignee_id].id,
+        full_name: `${usersMap[item.assignee_id].first_name} ${usersMap[item.assignee_id].last_name}`,
+        email_address: usersMap[item.assignee_id].email_address,
+        contact_number: `${usersMap[item.assignee_id].country_code} ${usersMap[item.assignee_id].number}`
+      } : null,
+      status: item.is_approved ? 'approved' : (item.sent_to_advisor ? 'pending_approval' : 'new')
+    }));
+
+    res.json({ notifications });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

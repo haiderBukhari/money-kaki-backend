@@ -24,14 +24,19 @@ router.post('/decline/:id', userController.declineUser);
 router.get('/points', verifyToken, userController.getPoints);
 router.get('/assigned', verifyToken, userController.getUsersByRole);
 
-router.get('/', userController.getAllUsers);
-router.put('/:id', userController.editUser);
-router.get('/:id', userController.getUserById);
-router.delete('/:id', userController.deleteUser);
 router.delete('/delete-account', verifyToken, userController.deleteOwnAccount);
 
 router.get('/:userId/advisors', userController.getUserAdvisors);
 router.put('/:userId/assign/:advisorId', verifyToken, userController.changeUserAdvisor);
 router.post('/send-verification-code', verifyToken, userController.sendVerificationCode);
+router.get('/notifications', verifyToken, userController.getUserNotifications);
+router.post('/redeem-reward', verifyToken, userController.redeemUserReward);
+router.get('/advisor-rewards', verifyToken, userController.getUserAdvisorRewards);
+
+router.get('/', userController.getAllUsers);
+router.put('/:id', userController.editUser);
+router.get('/:id', userController.getUserById);
+router.delete('/:id', userController.deleteUser);
+
 
 module.exports = router; 

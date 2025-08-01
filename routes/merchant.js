@@ -8,7 +8,7 @@ router.post('/', merchantController.createMerchant);
 // Get all merchants
 router.get('/', merchantController.getAllMerchants);
 // Get all available merchants (quantity > 0)
-router.get('/get-all-merchants', merchantController.getAllAvailableMerchants);
+router.get('/get-all-merchants', verifyToken, merchantController.getAllAvailableMerchants);
 // Get merchant by id
 router.get('/:id', merchantController.getMerchantById);
 // Update merchant
