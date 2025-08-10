@@ -1099,12 +1099,91 @@ exports.deleteOwnAccount = async (req, res) => {
         leaving_reason
       });
     if (reasonError) return res.status(500).json({ error: reasonError.message });
-    // Delete user
+
+    // 1) Delete rewards_assignee rows for this user
+    const { error: raDeleteError } = await supabase
+      .from('rewards_assignee')
+      .delete()
+      .eq('assignee_id', userId);
+    if (raDeleteError) return res.status(500).json({ error: raDeleteError.message });
+
+    // Also delete rewards_assignee created by this user (safety)
+    const { error: raCreatedByDeleteError } = await supabase
+      .from('rewards_assignee')
+      .delete()
+      .eq('created_by', userId);
+    if (raCreatedByDeleteError) return res.status(500).json({ error: raCreatedByDeleteError.message });
+
+    // 2) Delete transactions for this user
+    const { error: txDeleteError } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('user_id', userId);
+    if (txDeleteError) return res.status(500).json({ error: txDeleteError.message });
+
+    // 3) Delete user_finances for this user
+    const { error: ufDeleteError } = await supabase
+      .from('user_finances')
+      .delete()
+      .eq('user_id', userId);
+    if (ufDeleteError) return res.status(500).json({ error: ufDeleteError.message });
+
+    // 4) Delete assigned_users mapping for this user
+    const { error: auDeleteError } = await supabase
+      .from('assigned_users')
+      .delete()
+      .eq('user_id', userId);
+    if (auDeleteError) return res.status(500).json({ error: auDeleteError.message });
+
+    // Also remove assignments where this user is a mentor/advisor (safety)
+    const { error: auMentorDeleteError } = await supabase
+      .from('assigned_users')
+      .delete()
+      .eq('mentor_id', userId);
+    if (auMentorDeleteError) return res.status(500).json({ error: auMentorDeleteError.message });
+
+    // 5) Delete savings (via user's goals), then goals for this user
+    const { data: goals, error: goalsFetchError } = await supabase
+      .from('goals')
+      .select('id')
+      .eq('user_id', userId);
+    if (goalsFetchError) return res.status(500).json({ error: goalsFetchError.message });
+
+    const goalIds = (goals || []).map(g => g.id);
+    if (goalIds.length > 0) {
+      const { error: savingsDeleteError } = await supabase
+        .from('savings')
+        .delete()
+        .in('goal_id', goalIds);
+      if (savingsDeleteError) return res.status(500).json({ error: savingsDeleteError.message });
+    }
+
+    const { error: goalsDeleteError } = await supabase
+      .from('goals')
+      .delete()
+      .eq('user_id', userId);
+    if (goalsDeleteError) return res.status(500).json({ error: goalsDeleteError.message });
+
+    // 6) Delete challenges where this user is the target or creator (safety)
+    const { error: chUserDeleteError } = await supabase
+      .from('challenges')
+      .delete()
+      .eq('user_id', userId);
+    if (chUserDeleteError) return res.status(500).json({ error: chUserDeleteError.message });
+
+    const { error: chCreatorDeleteError } = await supabase
+      .from('challenges')
+      .delete()
+      .eq('created_by', userId);
+    if (chCreatorDeleteError) return res.status(500).json({ error: chCreatorDeleteError.message });
+
+    // Finally, delete the user
     const { error } = await supabase
       .from('users')
       .delete()
       .eq('id', userId);
     if (error) return res.status(500).json({ error: error.message });
+
     res.json({ message: 'User account deleted successfully.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
