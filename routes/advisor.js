@@ -29,7 +29,7 @@ router.get('/rewards', verifyToken, advisorController.getAdvisorRewards);
 router.post('/redeem-reward', verifyToken, advisorController.redeemAdvisorReward);
 router.get('/notifications', verifyToken, advisorController.getAdvisorNotifications);
 
-router.post('/', advisorController.createAdvisor);
+router.post('/create', advisorController.createAdvisor);
 // Get all advisors
 router.get('/', advisorController.getAllAdvisors);
 // Get advisor by id
