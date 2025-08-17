@@ -887,3 +887,89 @@ exports.getAdvisorNotifications = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// Get advisor revenue from approved rewards
+exports.getAdvisorRevenue = async (req, res) => {
+  try {
+    // Get all advisors
+    const { data: advisors, error: advisorsError } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email_address, profile_picture')
+      .eq('role', 'advisor');
+
+    if (advisorsError) {
+      return res.status(500).json({ error: advisorsError.message });
+    }
+
+    // Get all approved reward assignments
+    const { data: rewardAssignments, error: assignmentsError } = await supabase
+      .from('rewards_assignee')
+      .select('created_by, reward_id, quantity, updated_at')
+      .eq('is_approved', true);
+
+    if (assignmentsError) {
+      return res.status(500).json({ error: assignmentsError.message });
+    }
+
+    // Get all rewards with prices
+    const rewardIds = [...new Set(rewardAssignments.map(assignment => assignment.reward_id))];
+    const { data: rewards, error: rewardsError } = await supabase
+      .from('rewards')
+      .select('id, price')
+      .in('id', rewardIds);
+
+    if (rewardsError) {
+      return res.status(500).json({ error: rewardsError.message });
+    }
+
+    // Create a map of reward_id to price
+    const rewardsMap = {};
+    rewards.forEach(reward => {
+      rewardsMap[reward.id] = reward.price || 0;
+    });
+
+    // Calculate revenue for each advisor
+    const advisorRevenue = advisors.map(advisor => {
+      const advisorAssignments = rewardAssignments.filter(assignment => 
+        assignment.created_by === advisor.id
+      );
+
+      let totalQuantity = 0;
+      let totalRevenue = 0;
+      const rewardDetails = [];
+
+      advisorAssignments.forEach(assignment => {
+        const quantity = assignment.quantity || 0;
+        const price = rewardsMap[assignment.reward_id] || 0;
+        const revenue = quantity * price;
+
+        totalQuantity += quantity;
+        totalRevenue += revenue;
+
+        rewardDetails.push({
+          reward_id: assignment.reward_id,
+          quantity: quantity,
+          price: price,
+          revenue: revenue,
+          date: assignment.updated_at
+        });
+      });
+
+      return {
+        id: advisor.id,
+        full_name: `${advisor.first_name || ''} ${advisor.last_name || ''}`.trim(),
+        first_name: advisor.first_name,
+        last_name: advisor.last_name,
+        email_address: advisor.email_address,
+        profile_picture: advisor.profile_picture,
+        total_quantity: totalQuantity,
+        total_revenue: totalRevenue,
+        reward_details: rewardDetails
+      };
+    });
+
+    res.json({ advisor_revenue: advisorRevenue });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
-const { askClaude } = require('../utils/textagent');
+const { askClaude, extractMonthlyIncome, extractMonthlyExpense, extractAmountToSave, extractTodaySpend } = require('../utils/textagent');
+const { requestPasswordReset } = require('./advisorController');
 
 // Helper to get or create user_finances row
 async function getOrCreateUserFinances(userId) {
@@ -25,16 +26,25 @@ exports.addMonthlyIncome = async (req, res) => {
   try {
     const userId = req.user.id;
     const { monthly_income } = req.body;
-    if (monthly_income == null) return res.status(400).json({ error: 'monthly_income required' });
+    
+    let incomeAmount = monthly_income;
+    
+    // If monthly_income is a string (prompt), use AI to extract income amount
+    if (typeof monthly_income === 'string') {
+      incomeAmount = await extractMonthlyIncome(monthly_income);
+    } else if (monthly_income == null) {
+      return res.status(400).json({ error: 'monthly_income required' });
+    }
+    
     await getOrCreateUserFinances(userId);
     const { data, error } = await supabase
       .from('user_finances')
-      .update({ monthly_income })
+      .update({ monthly_income: incomeAmount })
       .eq('user_id', userId)
       .select('*')
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ user_finances: data });
+    res.json({ user_finances: data, extracted_amount: incomeAmount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -44,16 +54,25 @@ exports.addMonthlyExpense = async (req, res) => {
   try {
     const userId = req.user.id;
     const { monthly_expense } = req.body;
-    if (monthly_expense == null) return res.status(400).json({ error: 'monthly_expense required' });
+    
+    let expenseAmount = monthly_expense;
+    
+    // If monthly_expense is a string (prompt), use AI to extract expense amount
+    if (typeof monthly_expense === 'string') {
+      expenseAmount = await extractMonthlyExpense(monthly_expense);
+    } else if (monthly_expense == null) {
+      return res.status(400).json({ error: 'monthly_expense required' });
+    }
+    
     await getOrCreateUserFinances(userId);
     const { data, error } = await supabase
       .from('user_finances')
-      .update({ monthly_expense })
+      .update({ monthly_expense: expenseAmount })
       .eq('user_id', userId)
       .select('*')
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ user_finances: data });
+    res.json({ user_finances: data, extracted_amount: expenseAmount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -101,16 +120,25 @@ exports.addAmountToSave = async (req, res) => {
   try {
     const userId = req.user.id;
     const { amount_to_save } = req.body;
-    if (amount_to_save == null) return res.status(400).json({ error: 'amount_to_save required' });
+    
+    let saveAmount = amount_to_save;
+    
+    // If amount_to_save is a string (prompt), use AI to extract save amount
+    if (typeof amount_to_save === 'string') {
+      saveAmount = await extractAmountToSave(amount_to_save);
+    } else if (amount_to_save == null) {
+      return res.status(400).json({ error: 'amount_to_save required' });
+    }
+    
     await getOrCreateUserFinances(userId);
     const { data, error } = await supabase
       .from('user_finances')
-      .update({ amount_to_save })
+      .update({ amount_to_save: saveAmount })
       .eq('user_id', userId)
       .select('*')
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ user_finances: data });
+    res.json({ user_finances: data, extracted_amount: saveAmount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -120,16 +148,25 @@ exports.addTodaySpend = async (req, res) => {
   try {
     const userId = req.user.id;
     const { today_spend } = req.body;
-    if (today_spend == null) return res.status(400).json({ error: 'today_spend required' });
+    
+    let spendAmount = today_spend;
+    
+    // If today_spend is a string (prompt), use AI to extract today's spend amount
+    if (typeof today_spend === 'string') {
+      spendAmount = await extractTodaySpend(today_spend);
+    } else if (today_spend == null) {
+      return res.status(400).json({ error: 'today_spend required' });
+    }
+    
     await getOrCreateUserFinances(userId);
     const { data, error } = await supabase
       .from('user_finances')
-      .update({ today_spend })
+      .update({ today_spend: spendAmount })
       .eq('user_id', userId)
       .select('*')
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ user_finances: data });
+    res.json({ user_finances: data, extracted_amount: spendAmount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -138,6 +175,7 @@ exports.addTodaySpend = async (req, res) => {
 exports.addTransaction = async (req, res) => {
   try {
     const userId = req.user.id;
+    console.log(req.body)
     const { transaction } = req.body;
     if (!transaction) return res.status(400).json({ error: 'transaction required' });
     await getOrCreateUserFinances(userId);

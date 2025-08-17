@@ -11,6 +11,7 @@ const MAILGUN_DOMAIN = process.env.MAILGUN_DOMAIN || 'mail.first-4.com';
 const FROM_EMAIL = process.env.FROM_EMAIL || 'Mailgun Sandbox <postmaster@mail.first-4.com>';
 
 const sendAdvisorVerificationEmail = async (advisorName, email, code) => {
+  console.log(advisorName, email, code);
   if (!advisorName || !email || !code) {
     return { error: 'Missing required fields.' };
   }

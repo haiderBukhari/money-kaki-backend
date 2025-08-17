@@ -29,9 +29,11 @@ router.delete('/delete-account', verifyToken, userController.deleteOwnAccount);
 router.get('/:userId/advisors', userController.getUserAdvisors);
 router.put('/:userId/assign/:advisorId', verifyToken, userController.changeUserAdvisor);
 router.post('/send-verification-code', verifyToken, userController.sendVerificationCode);
+router.post('/send-verification-email', userController.sendVerificationEmailByEmail);
 router.get('/notifications', verifyToken, userController.getUserNotifications);
 router.post('/redeem-reward', verifyToken, userController.redeemUserReward);
 router.get('/advisor-rewards', verifyToken, userController.getUserAdvisorRewards);
+router.get('/revenue', verifyToken, userController.getUserRevenue);
 
 router.get('/', userController.getAllUsers);
 router.put('/:id', userController.editUser);

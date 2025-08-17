@@ -27,8 +27,8 @@ function getFullName(user) {
 }
 
 exports.createUser = async (req, res) => {
-  const { first_name, last_name, email_address, country_code, number, referal_code } = req.body;
-  if (!first_name || !last_name || !email_address || !country_code || !number) {
+  const { first_name, last_name, email_address, country_code, number, referal_code, birthday_date } = req.body;
+  if (!first_name || !last_name || !email_address || !country_code || !number || !birthday_date) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
@@ -69,6 +69,7 @@ exports.createUser = async (req, res) => {
         country_code,
         number,
         email_code,
+        birthday_date,
         role: 'user'
       },
     ])
@@ -966,7 +967,7 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { first_name, last_name, email_address, country_code, number, monthly_income } = req.body;
+    const { first_name, last_name, email_address, country_code, number, monthly_income, birthday_date } = req.body;
     // Update users table
     const updateFields = {};
     if (first_name !== undefined) updateFields.first_name = first_name;
@@ -974,20 +975,21 @@ exports.updateProfile = async (req, res) => {
     if (email_address !== undefined) updateFields.email_address = email_address;
     if (country_code !== undefined) updateFields.country_code = country_code;
     if (number !== undefined) updateFields.number = number;
+    if (birthday_date !== undefined) updateFields.birthday_date = birthday_date;
     let userUpdate, userError;
     if (Object.keys(updateFields).length > 0) {
       ({ data: userUpdate, error: userError } = await supabase
         .from('users')
         .update(updateFields)
         .eq('id', userId)
-        .select('first_name, last_name, email_address, country_code, number')
+        .select('first_name, last_name, email_address, country_code, number, birthday_date')
         .single());
       if (userError) return res.status(500).json({ error: userError.message });
     } else {
       // Get current user if not updating
       ({ data: userUpdate, error: userError } = await supabase
         .from('users')
-        .select('first_name, last_name, email_address, country_code, number')
+        .select('first_name, last_name, email_address, country_code, number, birthday_date')
         .eq('id', userId)
         .single());
       if (userError) return res.status(500).json({ error: userError.message });
@@ -1037,6 +1039,7 @@ exports.updateProfile = async (req, res) => {
       first_name: userUpdate.first_name,
       last_name: userUpdate.last_name,
       country_code: userUpdate.country_code,
+      birthday_date: userUpdate.birthday_date,
       number: userUpdate.number,
       email_address: userUpdate.email_address,
       monthly_income: financesUpdate ? financesUpdate.monthly_income : null
@@ -1074,7 +1077,59 @@ exports.sendVerificationCode = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-}; 
+};
+
+exports.sendVerificationEmailByEmail = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Check if email exists in users table
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email_address, full_name')
+      .eq('email_address', email)
+      .single();
+
+    if (userError) {
+      return res.status(404).json({ error: 'User with this email not found' });
+    }
+
+
+    const userName = (user.first_name && user.last_name) !== null  ? `${user.first_name} ${user.last_name}` : user.full_name;
+
+    if (!user) {
+      return res.status(404).json({ error: 'User with this email not found' });
+    }
+
+    // Generate 4-digit code
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    
+    // Save code to user (email_code)
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ email_code: code })
+      .eq('id', user.id);
+      
+    if (updateError) {
+      return res.status(500).json({ error: updateError.message });
+    }
+
+    // Send email
+    const emailResult = await sendAdvisorVerificationEmail(userName, user.email_address, code);
+    
+    if (emailResult.error) {
+      return res.status(500).json({ error: emailResult.error });
+    }
+
+    res.json({ message: 'Verification code sent to email.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 // Delete the current user's account and log leaving reason
 exports.deleteOwnAccount = async (req, res) => {
@@ -1360,19 +1415,165 @@ exports.getUserAdvisorRewards = async (req, res) => {
       return res.status(500).json({ error: rewardsError.message });
     }
 
+    // Get user's birthday for birthday schedule type filtering
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('birthday_date')
+      .eq('id', userId)
+      .single();
+
+    if (userError) {
+      return res.status(500).json({ error: userError.message });
+    }
+
     // Create a map of reward_id to reward details
     const rewardsMap = {};
     rewards.forEach(reward => {
       rewardsMap[reward.id] = reward;
     });
 
-    // Combine assignments with reward details
-    const rewardsWithDetails = assignments.map(assignment => ({
+    // Filter assignments based on schedule type and date conditions
+    const today = new Date();
+    const todayMonth = today.getMonth() + 1; // getMonth() returns 0-11
+    const todayDay = today.getDate();
+    
+    const filteredAssignments = assignments.filter(assignment => {
+      if (assignment.schedule_type === 'birthday') {
+        if (!user.birthday_date) return false;
+        
+        const birthday = new Date(user.birthday_date);
+        const birthdayMonth = birthday.getMonth() + 1;
+        const birthdayDay = birthday.getDate();
+        
+        // Check if birthday is today
+        if (birthdayMonth === todayMonth && birthdayDay === todayDay) {
+          return true;
+        }
+        
+        // Check if birthday was within the last week (comparing only month and day)
+        const oneWeekAgo = new Date(today);
+        oneWeekAgo.setDate(today.getDate() - 7);
+        
+        for (let i = 0; i <= 7; i++) {
+          const checkDate = new Date(oneWeekAgo);
+          checkDate.setDate(oneWeekAgo.getDate() + i);
+          const checkMonth = checkDate.getMonth() + 1;
+          const checkDay = checkDate.getDate();
+          
+          if (checkMonth === birthdayMonth && checkDay === birthdayDay) {
+            return true;
+          }
+        }
+        
+        return false;
+      } else if (assignment.schedule_type === 'custom') {
+        if (!assignment.date) return false;
+        
+        const rewardDate = new Date(assignment.date);
+        const diffTime = Math.abs(today - rewardDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        // Check if date is within 7 days (past or future)
+        return diffDays <= 7;
+      }
+      
+      // For other schedule types, show all
+      return true;
+    });
+
+    // Combine filtered assignments with reward details
+    const rewardsWithDetails = filteredAssignments.map(assignment => ({
       ...assignment,
       reward: rewardsMap[assignment.reward_id] || null
     }));
 
     res.json({ rewards: rewardsWithDetails });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get user revenue from approved rewards
+exports.getUserRevenue = async (req, res) => {
+  try {
+    // Get all users
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email_address, profile_picture')
+      .eq('role', 'user');
+
+    if (usersError) {
+      return res.status(500).json({ error: usersError.message });
+    }
+
+    // Get all approved reward assignments
+    const { data: rewardAssignments, error: assignmentsError } = await supabase
+      .from('rewards_assignee')
+      .select('assignee_id, reward_id, quantity, updated_at')
+      .eq('is_approved', true);
+
+    if (assignmentsError) {
+      return res.status(500).json({ error: assignmentsError.message });
+    }
+
+    // Get all rewards with prices
+    const rewardIds = [...new Set(rewardAssignments.map(assignment => assignment.reward_id))];
+    const { data: rewards, error: rewardsError } = await supabase
+      .from('rewards')
+      .select('id, price')
+      .in('id', rewardIds);
+
+    if (rewardsError) {
+      return res.status(500).json({ error: rewardsError.message });
+    }
+
+    // Create a map of reward_id to price
+    const rewardsMap = {};
+    rewards.forEach(reward => {
+      rewardsMap[reward.id] = reward.price || 0;
+    });
+
+    // Calculate revenue for each user
+    const userRevenue = users.map(user => {
+      const userAssignments = rewardAssignments.filter(assignment => 
+        assignment.assignee_id === user.id
+      );
+
+      let totalQuantity = 0;
+      let totalRevenue = 0;
+      const rewardDetails = [];
+
+      userAssignments.forEach(assignment => {
+        const quantity = assignment.quantity || 0;
+        const price = rewardsMap[assignment.reward_id] || 0;
+        const revenue = quantity * price;
+
+        totalQuantity += quantity;
+        totalRevenue += revenue;
+
+        rewardDetails.push({
+          reward_id: assignment.reward_id,
+          quantity: quantity,
+          price: price,
+          revenue: revenue,
+          date: assignment.updated_at
+        });
+      });
+
+      return {
+        id: user.id,
+        full_name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email_address: user.email_address,
+        profile_picture: user.profile_picture,
+        total_quantity: totalQuantity,
+        total_revenue: totalRevenue,
+        reward_details: rewardDetails
+      };
+    });
+
+    res.json({ user_revenue: userRevenue });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
