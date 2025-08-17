@@ -4,11 +4,115 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Extract transaction details from image using OCR
+async function extractTransactionFromImage(imageUrl, categories) {
+  try {
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a financial transaction extractor. Analyze the image and extract transaction details. Return ONLY a raw JSON object with the following structure, no markdown formatting, no code blocks, no additional text:
+
+{
+  "amount": <number>,
+  "type": <"income" | "expense" | "transfer" | "investment">,
+  "title": <string>,
+  "description": <string>,
+  "category": <string>,
+  "date": <"YYYY-MM-DD">
+}
+
+Available categories: ${categories.join(', ')}
+
+Rules:
+- amount: Extract the monetary value as a number
+- type: Determine if it's income, expense, transfer, or investment based on context
+- title: Create a brief, descriptive title for the transaction
+- description: Provide a detailed description of what the transaction is for
+- category: Choose the most appropriate category from the provided list
+- date: If date is visible, use it; otherwise use today's date in YYYY-MM-DD format
+- If any field cannot be determined, use reasonable defaults
+- IMPORTANT: Return ONLY the JSON object, no markdown, no code blocks, no explanations`
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extract transaction details from this image. Return only the JSON object, no other text."
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: imageUrl
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 500,
+      temperature: 0.1
+    });
+
+    const extractedText = response.choices[0].message.content.trim();
+    
+    // Try to parse the JSON response
+    try {
+      console.log(extractedText);
+      
+      // Extract JSON from markdown code blocks if present
+      let jsonText = extractedText;
+      if (extractedText.includes('```json')) {
+        const jsonMatch = extractedText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          jsonText = jsonMatch[1].trim();
+        }
+      } else if (extractedText.includes('```')) {
+        // Handle case where it's just ``` without json specification
+        const codeMatch = extractedText.match(/```\s*([\s\S]*?)\s*```/);
+        if (codeMatch) {
+          jsonText = codeMatch[1].trim();
+        }
+      }
+      
+      const transactionData = JSON.parse(jsonText);
+      
+      // Validate and set defaults for missing fields
+      const today = new Date().toISOString().split('T')[0];
+      
+      return {
+        amount: transactionData.amount || 0,
+        type: transactionData.type || 'expense',
+        title: transactionData.title || 'Transaction from image',
+        description: transactionData.description || 'Transaction extracted from uploaded image',
+        category: transactionData.category || 'Shopping',
+        date: transactionData.date || today
+      };
+    } catch (parseError) {
+      console.error('Error parsing OCR response:', parseError);
+      // Return default transaction if parsing fails
+      const today = new Date().toISOString().split('T')[0];
+      return {
+        amount: 0,
+        type: 'expense',
+        title: 'Transaction from image',
+        description: 'Transaction extracted from uploaded image',
+        category: 'Shopping',
+        date: today
+      };
+    }
+  } catch (error) {
+    console.error('Error in OCR extraction:', error);
+    throw new Error('Failed to extract transaction details from image');
+  }
+}
+
 // Extract monthly income from text
 async function extractMonthlyIncome(prompt) {
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4.1",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
@@ -36,7 +140,7 @@ async function extractMonthlyIncome(prompt) {
 async function extractMonthlyExpense(prompt) {
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4.1",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
@@ -64,7 +168,7 @@ async function extractMonthlyExpense(prompt) {
 async function extractAmountToSave(prompt) {
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4.1",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
@@ -88,11 +192,104 @@ async function extractAmountToSave(prompt) {
   }
 }
 
+// Extract transaction details from text
+async function extractTransactionFromText(prompt, categories) {
+  try {
+    const response = await client.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: `You are a financial transaction extractor. Analyze the text and extract transaction details. Return ONLY a raw JSON object with the following structure, no markdown formatting, no code blocks, no additional text:
+
+{
+  "amount": <number>,
+  "type": <"income" | "expense" | "transfer" | "investment">,
+  "title": <string>,
+  "description": <string>,
+  "category": <string>,
+  "date": <"YYYY-MM-DD">
+}
+
+Available categories: ${categories.join(', ')}
+
+Rules:
+- amount: Extract the monetary value as a number
+- type: Determine if it's income, expense, transfer, or investment based on context (usually expense for purchases)
+- title: Create a brief, descriptive title for the transaction
+- description: Provide a detailed description of what the transaction is for
+- category: Choose the most appropriate category from the provided list
+- date: If date is visible, use it; otherwise use today's date in YYYY-MM-DD format
+- If any field cannot be determined, use reasonable defaults
+- IMPORTANT: Return ONLY the JSON object, no markdown, no code blocks, no explanations`
+        },
+        {
+          role: "user",
+          content: `Extract transaction details from this text: "${prompt}". Return only the JSON object, no other text.`
+        }
+      ],
+      max_tokens: 500,
+      temperature: 0.1
+    });
+
+    const extractedText = response.choices[0].message.content.trim();
+    
+    // Try to parse the JSON response
+    try {
+      console.log(extractedText);
+      
+      // Extract JSON from markdown code blocks if present
+      let jsonText = extractedText;
+      if (extractedText.includes('```json')) {
+        const jsonMatch = extractedText.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          jsonText = jsonMatch[1].trim();
+        }
+      } else if (extractedText.includes('```')) {
+        // Handle case where it's just ``` without json specification
+        const codeMatch = extractedText.match(/```\s*([\s\S]*?)\s*```/);
+        if (codeMatch) {
+          jsonText = codeMatch[1].trim();
+        }
+      }
+      
+      const transactionData = JSON.parse(jsonText);
+      
+      // Validate and set defaults for missing fields
+      const today = new Date().toISOString().split('T')[0];
+      
+      return {
+        amount: transactionData.amount || 0,
+        type: transactionData.type || 'expense',
+        title: transactionData.title || 'Transaction from text',
+        description: transactionData.description || 'Transaction extracted from text prompt',
+        category: transactionData.category || 'Shopping',
+        date: transactionData.date || today
+      };
+    } catch (parseError) {
+      console.error('Error parsing text extraction response:', parseError);
+      // Return default transaction if parsing fails
+      const today = new Date().toISOString().split('T')[0];
+      return {
+        amount: 0,
+        type: 'expense',
+        title: 'Transaction from text',
+        description: 'Transaction extracted from text prompt',
+        category: 'Shopping',
+        date: today
+      };
+    }
+  } catch (error) {
+    console.error('Error in text extraction:', error);
+    throw new Error('Failed to extract transaction details from text');
+  }
+}
+
 // Extract today's spend from text
 async function extractTodaySpend(prompt) {
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4.1",
+      model: "gpt-4o",
       messages: [
         {
           role: "system",
@@ -120,7 +317,7 @@ async function extractTodaySpend(prompt) {
 async function askClaude(prompt) {
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4.1",
+      model: "gpt-4o",
       messages: [
         {
           role: "user",
@@ -143,6 +340,8 @@ async function askClaude(prompt) {
 }
 
 module.exports = {
+  extractTransactionFromImage,
+  extractTransactionFromText,
   extractMonthlyIncome,
   extractMonthlyExpense,
   extractAmountToSave,

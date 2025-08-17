@@ -1,5 +1,5 @@
 const supabase = require('../supabaseClient');
-const { askClaude, extractMonthlyIncome, extractMonthlyExpense, extractAmountToSave, extractTodaySpend } = require('../utils/textagent');
+const { askClaude, extractMonthlyIncome, extractMonthlyExpense, extractAmountToSave, extractTodaySpend, extractTransactionFromImage, extractTransactionFromText } = require('../utils/textagent');
 const { requestPasswordReset } = require('./advisorController');
 
 // Helper to get or create user_finances row
@@ -256,6 +256,136 @@ exports.createTransaction = async (req, res) => {
     res.status(201).json({ transactions: data });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+};
+
+// Create transaction from image using OCR
+exports.createTransactionFromImage = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { image } = req.body;
+    
+    if (!image) {
+      return res.status(400).json({ error: 'Image is required' });
+    }
+
+    // Available categories for the AI to choose from
+    const categories = [
+      "Food & Drinks",
+      "Car",
+      "Shopping",
+      "Transport",
+      "Travel",
+      "Entertainment",
+      "Health",
+      "Grocery",
+      "Pet",
+      "Education",
+      "Electronics",
+      "Beauty",
+      "Sports"
+    ];
+
+    // Extract transaction details from image using OCR
+    const extractedTransaction = await extractTransactionFromImage(image, categories);
+
+    // Validate extracted data
+    if (!extractedTransaction.amount || extractedTransaction.amount <= 0) {
+      return res.status(400).json({ error: 'Could not extract valid amount from image' });
+    }
+
+    // Create transaction in database
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert({
+        user_id: userId,
+        amount: extractedTransaction.amount,
+        type: extractedTransaction.type,
+        title: extractedTransaction.title,
+        description: extractedTransaction.description,
+        category: extractedTransaction.category,
+        date: extractedTransaction.date
+      })
+      .select('*');
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(201).json({ 
+      message: 'Transaction created successfully from image',
+      transaction: data[0],
+      extracted_data: extractedTransaction
+    });
+
+  } catch (err) {
+    console.error('Error creating transaction from image:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Create transaction from text prompt
+exports.createTransactionFromText = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { prompt } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ error: 'Text prompt is required' });
+    }
+
+    // Available categories for the AI to choose from
+    const categories = [
+      "Food & Drinks",
+      "Car",
+      "Shopping",
+      "Transport",
+      "Travel",
+      "Entertainment",
+      "Health",
+      "Grocery",
+      "Pet",
+      "Education",
+      "Electronics",
+      "Beauty",
+      "Sports"
+    ];
+
+    // Extract transaction details from text using AI
+    const extractedTransaction = await extractTransactionFromText(prompt, categories);
+
+    // Validate extracted data
+    if (!extractedTransaction.amount || extractedTransaction.amount <= 0) {
+      return res.status(400).json({ error: 'Could not extract valid amount from text' });
+    }
+
+    // Create transaction in database
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert({
+        user_id: userId,
+        amount: extractedTransaction.amount,
+        type: extractedTransaction.type,
+        title: extractedTransaction.title,
+        description: extractedTransaction.description,
+        category: extractedTransaction.category,
+        date: extractedTransaction.date
+      })
+      .select('*');
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(201).json({ 
+      message: 'Transaction created successfully from text',
+      transaction: data[0],
+      extracted_data: extractedTransaction
+    });
+
+  } catch (err) {
+    console.error('Error creating transaction from text:', err);
+    res.status(500).json({ error: err.message });
   }
 };
 

@@ -14,6 +14,9 @@ router.post('/add-transaction', verifyToken, userFinancesController.addTransacti
 router.post('/transactions/create-ai', verifyToken, userFinancesController.createTransactionAI);
 // Direct transaction creation (structured data)
 router.post('/transactions/create', verifyToken, userFinancesController.createTransaction);
+// Create transaction from image using OCR
+router.post('/transactions/create-from-image', verifyToken, userFinancesController.createTransactionFromImage);
+router.post('/transactions/create-from-text', verifyToken, userFinancesController.createTransactionFromText);
 router.get('/transactions', verifyToken, userFinancesController.getTransactions);
 router.get('/categories', verifyToken, userFinancesController.getCategories);
 router.get('/goals', verifyToken, userFinancesController.getGoals);

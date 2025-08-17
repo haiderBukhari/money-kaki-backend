@@ -718,7 +718,7 @@ exports.getUsersByRole = async (req, res) => {
       // Admin gets all users with role 'user' only
       const { data, error } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email_address, country_code, number')
+        .select('id, first_name, last_name, email_address, country_code, number, points')
         .eq('role', 'user')
         .order('created_at', { ascending: false });
 
@@ -728,27 +728,48 @@ exports.getUsersByRole = async (req, res) => {
       const userIds = data.map(user => user.id);
       const { data: financesData, error: financesError } = await supabase
         .from('user_finances')
-        .select('user_id, monthly_income')
+        .select('user_id, monthly_income, monthly_expense')
         .in('user_id', userIds);
 
       if (financesError) throw financesError;
 
-      // Create a map of user_id to monthly_income
+      // Get voucher quantities from rewards_assignee for all users
+      const { data: voucherData, error: voucherError } = await supabase
+        .from('rewards_assignee')
+        .select('assignee_id, quantity')
+        .eq('is_approved', true)
+        .in('assignee_id', userIds);
+
+      if (voucherError) throw voucherError;
+
+      // Create maps for finances and vouchers
       const financesMap = {};
       financesData.forEach(finance => {
-        financesMap[finance.user_id] = finance.monthly_income || 0;
+        financesMap[finance.user_id] = {
+          monthly_income: finance.monthly_income || 0,
+          monthly_expense: finance.monthly_expense || 0
+        };
       });
 
-      // Transform the data to include actual income values
+      const voucherMap = {};
+      voucherData.forEach(voucher => {
+        if (voucherMap[voucher.assignee_id]) {
+          voucherMap[voucher.assignee_id] += (voucher.quantity || 0);
+        } else {
+          voucherMap[voucher.assignee_id] = (voucher.quantity || 0);
+        }
+      });
+
+      // Transform the data to include actual income, expense, and voucher values
       const users = data.map(user => ({
         id: user.id,
         full_name: `${user.first_name} ${user.last_name}`,
         email_address: user.email_address,
         contact_number: user.country_code + " " + user.number,
-        income: financesMap[user.id] || 0,
-        expense: 0,
-        points: 0,
-        vocher: 0
+        income: financesMap[user.id]?.monthly_income || 0,
+        expense: financesMap[user.id]?.monthly_expense || 0,
+        points: user.points,
+        vocher: voucherMap[user.id] || 0
       }));
 
       res.json({ users });
@@ -764,7 +785,8 @@ exports.getUsersByRole = async (req, res) => {
             last_name,
             email_address,
             country_code,
-            number
+            number,
+            points
           )
         `)
         .eq('mentor_id', userId);
@@ -775,15 +797,36 @@ exports.getUsersByRole = async (req, res) => {
       const userIds = assignedUsers.map(assignment => assignment.users.id);
       const { data: financesData, error: financesError } = await supabase
         .from('user_finances')
-        .select('user_id, monthly_income')
+        .select('user_id, monthly_income, monthly_expense')
         .in('user_id', userIds);
 
       if (financesError) throw financesError;
 
-      // Create a map of user_id to monthly_income
+      // Get voucher quantities from rewards_assignee for assigned users
+      const { data: voucherData, error: voucherError } = await supabase
+        .from('rewards_assignee')
+        .select('assignee_id, quantity')
+        .eq('is_approved', true)
+        .in('assignee_id', userIds);
+
+      if (voucherError) throw voucherError;
+
+      // Create maps for finances and vouchers
       const financesMap = {};
       financesData.forEach(finance => {
-        financesMap[finance.user_id] = finance.monthly_income || 0;
+        financesMap[finance.user_id] = {
+          monthly_income: finance.monthly_income || 0,
+          monthly_expense: finance.monthly_expense || 0
+        };
+      });
+
+      const voucherMap = {};
+      voucherData.forEach(voucher => {
+        if (voucherMap[voucher.assignee_id]) {
+          voucherMap[voucher.assignee_id] += (voucher.quantity || 0);
+        } else {
+          voucherMap[voucher.assignee_id] = (voucher.quantity || 0);
+        }
       });
 
       // Transform the data to match the expected format
@@ -792,10 +835,10 @@ exports.getUsersByRole = async (req, res) => {
         full_name: `${assignment.users.first_name} ${assignment.users.last_name}`,
         email_address: assignment.users.email_address,
         contact_number: assignment.users.country_code + " " + assignment.users.number,
-        income: financesMap[assignment.users.id] || 0,
-        expense: 0,
-        points: 0,
-        vocher: 0
+        income: financesMap[assignment.users.id]?.monthly_income || 0,
+        expense: financesMap[assignment.users.id]?.monthly_expense || 0,
+        points: assignment.users?.points,
+        vocher: voucherMap[assignment.users.id] || 0
       }));
 
       res.json({ users });

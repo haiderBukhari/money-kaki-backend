@@ -116,17 +116,48 @@ exports.createPassword = async (req, res) => {
 };
 
 exports.getAllAdvisors = async (req, res) => {
-  const { data, error } = await supabase
-    .from('users')
-    .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity')
-    .eq('role', 'advisor')
-    .eq('status', 'active');
+  try {
+    // Get all active advisors
+    const { data: advisors, error: advisorsError } = await supabase
+      .from('users')
+      .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture')
+      .eq('role', 'advisor')
+      .eq('status', 'active');
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
+    if (advisorsError) {
+      return res.status(500).json({ error: advisorsError.message });
+    }
+
+    // Get all approved reward assignments
+    const { data: rewardAssignments, error: assignmentsError } = await supabase
+      .from('rewards_assignee')
+      .select('created_by, quantity')
+      .eq('is_approved', true);
+
+    if (assignmentsError) {
+      return res.status(500).json({ error: assignmentsError.message });
+    }
+
+    // Calculate voucher quantity for each advisor
+    const advisorsWithVoucherQuantity = advisors.map(advisor => {
+      const advisorAssignments = rewardAssignments.filter(assignment => 
+        assignment.created_by === advisor.id
+      );
+      
+      const totalVoucherQuantity = advisorAssignments.reduce((total, assignment) => {
+        return total + (assignment.quantity || 0);
+      }, 0);
+
+      return {
+        ...advisor,
+        vocher_quantity: totalVoucherQuantity
+      };
+    });
+
+    res.json({ advisors: advisorsWithVoucherQuantity });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  res.json({ advisors: data });
 };
 
 exports.deleteAdvisor = async (req, res) => {
@@ -969,6 +1000,232 @@ exports.getAdvisorRevenue = async (req, res) => {
     });
 
     res.json({ advisor_revenue: advisorRevenue });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get dashboard statistics based on user role
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    if (userRole === 'admin') {
+      // Admin gets full platform overview
+      
+      // Get total users count
+      const { data: usersData, error: usersError } = await supabase
+        .from('users')
+        .select('id, created_at')
+        .eq('role', 'user');
+
+      if (usersError) throw usersError;
+
+      // Get total advisors count
+      const { data: advisorsData, error: advisorsError } = await supabase
+        .from('users')
+        .select('id, created_at')
+        .eq('role', 'advisor')
+        .eq('status', 'active');
+
+      if (advisorsError) throw advisorsError;
+
+      // Get total rewards given (approved rewards)
+      const { data: rewardsData, error: rewardsError } = await supabase
+        .from('rewards_assignee')
+        .select('quantity, created_at')
+        .eq('is_approved', true);
+
+      if (rewardsError) throw rewardsError;
+
+      // Calculate total revenue from approved rewards
+      const { data: rewardDetails, error: rewardDetailsError } = await supabase
+        .from('rewards_assignee')
+        .select(`
+          quantity,
+          updated_at,
+          rewards (
+            price
+          )
+        `)
+        .eq('is_approved', true);
+
+      if (rewardDetailsError) throw rewardDetailsError;
+
+      let totalRevenue = 0;
+      rewardDetails.forEach(item => {
+        const quantity = item.quantity || 0;
+        const price = item.rewards?.price || 0;
+        totalRevenue += quantity * price;
+      });
+
+      // Calculate monthly user growth for chart (last 6 months)
+      const currentDate = new Date();
+      const monthlyUsers = [];
+      
+      for (let i = 5; i >= 0; i--) {
+        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
+        
+        // Count users created in this month
+        const monthUsers = usersData.filter(user => {
+          if (!user.created_at) return false;
+          const userDate = new Date(user.created_at);
+          return userDate.getFullYear() === monthDate.getFullYear() && 
+                 userDate.getMonth() === monthDate.getMonth();
+        }).length;
+
+        monthlyUsers.push({
+          name: monthName,
+          users: monthUsers
+        });
+      }
+
+      // Calculate monthly revenue for chart (last 9 months)
+      const monthlyRevenue = [];
+      
+      for (let i = 8; i >= 0; i--) {
+        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
+        
+        // Calculate revenue for this month
+        let monthRevenue = 0;
+        rewardDetails.forEach(item => {
+          if (!item.updated_at) return;
+          const rewardDate = new Date(item.updated_at);
+          if (rewardDate.getFullYear() === monthDate.getFullYear() && 
+              rewardDate.getMonth() === monthDate.getMonth()) {
+            const quantity = item.quantity || 0;
+            const price = item.rewards?.price || 0;
+            monthRevenue += quantity * price;
+          }
+        });
+
+        monthlyRevenue.push({
+          name: monthName,
+          revenue: monthRevenue
+        });
+      }
+
+      res.json({
+        stats: {
+          totalUsers: usersData.length,
+          totalAdvisors: advisorsData.length,
+          totalRewardsGiven: rewardsData.reduce((sum, item) => sum + (item.quantity || 0), 0),
+          totalRevenue: totalRevenue
+        },
+        charts: {
+          usersOverview: monthlyUsers,
+          revenueOverview: monthlyRevenue
+        }
+      });
+
+    } else if (userRole === 'advisor') {
+      // Advisor gets only their assigned users overview
+      
+      // Get assigned users
+      const { data: assignedUsers, error: assignedError } = await supabase
+        .from('assigned_users')
+        .select(`
+          user_id,
+          users!assigned_users_user_id_fkey (
+            id,
+            created_at
+          )
+        `)
+        .eq('mentor_id', userId);
+
+      if (assignedError) throw assignedError;
+
+      // Get rewards given by this advisor (approved)
+      const { data: advisorRewards, error: advisorRewardsError } = await supabase
+        .from('rewards_assignee')
+        .select(`
+          quantity,
+          updated_at,
+          rewards (
+            price
+          )
+        `)
+        .eq('created_by', userId)
+        .eq('is_approved', true);
+
+      if (advisorRewardsError) throw advisorRewardsError;
+
+      // Calculate total revenue for this advisor
+      let totalRevenue = 0;
+      advisorRewards.forEach(item => {
+        const quantity = item.quantity || 0;
+        const price = item.rewards?.price || 0;
+        totalRevenue += quantity * price;
+      });
+
+      // Calculate monthly user growth for assigned users (last 6 months)
+      const currentDate = new Date();
+      const monthlyUsers = [];
+      
+      for (let i = 5; i >= 0; i--) {
+        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
+        
+        // Count assigned users created in this month
+        const monthUsers = assignedUsers.filter(assignment => {
+          if (!assignment.users?.created_at) return false;
+          const userDate = new Date(assignment.users.created_at);
+          return userDate.getFullYear() === monthDate.getFullYear() && 
+                 userDate.getMonth() === monthDate.getMonth();
+        }).length;
+
+        monthlyUsers.push({
+          name: monthName,
+          users: monthUsers
+        });
+      }
+
+      // Calculate monthly revenue for this advisor (last 9 months)
+      const monthlyRevenue = [];
+      
+      for (let i = 8; i >= 0; i--) {
+        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
+        
+        // Calculate revenue for this month
+        let monthRevenue = 0;
+        advisorRewards.forEach(item => {
+          if (!item.updated_at) return;
+          const rewardDate = new Date(item.updated_at);
+          if (rewardDate.getFullYear() === monthDate.getFullYear() && 
+              rewardDate.getMonth() === monthDate.getMonth()) {
+            const quantity = item.quantity || 0;
+            const price = item.rewards?.price || 0;
+            monthRevenue += quantity * price;
+          }
+        });
+
+        monthlyRevenue.push({
+          name: monthName,
+          revenue: monthRevenue
+        });
+      }
+
+      res.json({
+        stats: {
+          totalUsers: assignedUsers.length,
+          totalAdvisors: 1, // Just this advisor
+          totalRewardsGiven: advisorRewards.reduce((sum, item) => sum + (item.quantity || 0), 0),
+          totalRevenue: totalRevenue
+        },
+        charts: {
+          usersOverview: monthlyUsers,
+          revenueOverview: monthlyRevenue
+        }
+      });
+
+    } else {
+      return res.status(403).json({ error: 'Access denied. Admin or Advisor role required.' });
+    }
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
