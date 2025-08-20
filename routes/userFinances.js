@@ -18,6 +18,8 @@ router.post('/transactions/create', verifyToken, userFinancesController.createTr
 router.post('/transactions/create-from-image', verifyToken, userFinancesController.createTransactionFromImage);
 router.post('/transactions/create-from-text', verifyToken, userFinancesController.createTransactionFromText);
 router.get('/transactions', verifyToken, userFinancesController.getTransactions);
+router.put('/transactions/:transactionId', verifyToken, userFinancesController.updateTransaction);
+router.delete('/transactions/:transactionId', verifyToken, userFinancesController.deleteTransaction);
 router.get('/categories', verifyToken, userFinancesController.getCategories);
 router.get('/goals', verifyToken, userFinancesController.getGoals);
 router.get('/get-income', verifyToken, userFinancesController.getIncome);

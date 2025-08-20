@@ -441,12 +441,12 @@ exports.getIncome = async (req, res) => {
     const userId = req.user.id;
     const { data, error } = await supabase
       .from('user_finances')
-      .select('monthly_income')
+      .select('monthly_income, monthly_expense, selected_category, goal_to_achieve, amount_to_save, today_spend, transaction')
       .eq('user_id', userId)
       .single();
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'No income data found for user' });
-    res.json({ monthly_income: data.monthly_income });
+    res.json({ monthly_income: data.monthly_income, monthly_expense: data.monthly_expense, selected_category: data.selected_category, goal_to_achieve: data.goal_to_achieve, amount_to_save: data.amount_to_save, today_spend: data.today_spend, transaction: data.transaction });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -494,6 +494,99 @@ exports.getUserFinanceStatus = async (req, res) => {
       user_finances: data
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Update transaction
+exports.updateTransaction = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { transactionId } = req.params;
+    const { amount, type, title, description, category, date } = req.body;
+
+    // First check if the transaction exists and belongs to the user
+    const { data: existingTransaction, error: checkError } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', transactionId)
+      .eq('user_id', userId)
+      .single();
+
+    if (checkError || !existingTransaction) {
+      return res.status(404).json({ error: 'Transaction not found or access denied' });
+    }
+
+    // Build update object with only provided fields
+    const updateData = {};
+
+    if (amount !== undefined) updateData.amount = amount;
+    if (type !== undefined) updateData.type = type;
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (category !== undefined) updateData.category = category;
+    if (date !== undefined) updateData.date = date;
+
+    // Update the transaction
+    const { data, error } = await supabase
+      .from('transactions')
+      .update(updateData)
+      .eq('id', transactionId)
+      .eq('user_id', userId)
+      .select('*')
+      .single();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ 
+      message: 'Transaction updated successfully',
+      transaction: data 
+    });
+
+  } catch (err) {
+    console.error('Error updating transaction:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Delete transaction
+exports.deleteTransaction = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { transactionId } = req.params;
+
+    // First check if the transaction exists and belongs to the user
+    const { data: existingTransaction, error: checkError } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('id', transactionId)
+      .eq('user_id', userId)
+      .single();
+
+    if (checkError || !existingTransaction) {
+      return res.status(404).json({ error: 'Transaction not found or access denied' });
+    }
+
+    // Delete the transaction
+    const { error } = await supabase
+      .from('transactions')
+      .delete()
+      .eq('id', transactionId)
+      .eq('user_id', userId);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ 
+      message: 'Transaction deleted successfully',
+      deleted_transaction_id: transactionId
+    });
+
+  } catch (err) {
+    console.error('Error deleting transaction:', err);
     res.status(500).json({ error: err.message });
   }
 }; 

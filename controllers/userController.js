@@ -27,7 +27,7 @@ function getFullName(user) {
 }
 
 exports.createUser = async (req, res) => {
-  const { first_name, last_name, email_address, country_code, number, referal_code, birthday_date } = req.body;
+  const { first_name, last_name, email_address, country_code, number, referal_code, birthday_date, profile_picture } = req.body;
   if (!first_name || !last_name || !email_address || !country_code || !number || !birthday_date) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
@@ -70,6 +70,7 @@ exports.createUser = async (req, res) => {
         number,
         email_code,
         birthday_date,
+        profile_picture,
         role: 'user'
       },
     ])
@@ -240,7 +241,7 @@ exports.createPassword = async (req, res) => {
   // Fetch user with login fields
   const { data: userData, error: userFetchError } = await supabase
     .from('users')
-    .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password')
+    .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password, birthday_date')
     .eq('email_address', email_address)
     .single();
 
@@ -405,7 +406,7 @@ exports.loginUser = async (req, res) => {
 
   const { data: user, error: findError } = await supabase
     .from('users')
-    .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password')
+    .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password, birthday_date')
     .eq('email_address', email)
     .single();
 
