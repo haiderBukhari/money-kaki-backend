@@ -974,11 +974,10 @@ exports.getProfile = async (req, res) => {
     // Get user info
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('first_name, last_name, email_address, country_code, number, referral')
+      .select('id, role, first_name, last_name, email_address, country_code, number, status, profile_picture, referral')
       .eq('id', userId)
       .single();
 
-    console.log(user);
     if (userError) return res.status(500).json({ error: userError.message });
     if (!user) return res.status(404).json({ error: 'User not found' });
     // Get monthly_income
@@ -998,6 +997,10 @@ exports.getProfile = async (req, res) => {
       last_name: user.last_name,
       country_code: user.country_code,
       referral: user.referral,
+      profile_picture: user.profile_picture,
+      status: user.status,
+      role: user.role,
+      id: user.id,
       number: user.number,
       email_address: user.email_address,
       monthly_income: finances ? finances.monthly_income : null

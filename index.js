@@ -7,6 +7,7 @@ const userRoutes = require('./routes/user');
 const privacyPolicyRoutes = require('./routes/privacyPolicy');
 const termsConditionsRoutes = require('./routes/termsConditions');
 const userFinancesRoutes = require('./routes/userFinances');
+const { scheduleChallengeCronJob } = require('./utils/cronJobs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,6 +33,9 @@ app.use('/api/user', userRoutes);
 app.use('/api/privacy-policy', privacyPolicyRoutes);
 app.use('/api/terms-conditions', termsConditionsRoutes);
 app.use('/api/goals-savings', require('./routes/goals'));
+
+// Initialize cron jobs
+scheduleChallengeCronJob();
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

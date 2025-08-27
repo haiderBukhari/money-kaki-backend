@@ -345,7 +345,7 @@ exports.getRole = async (req, res) => {
     // Get additional user details from database
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, first_name, last_name, country_code, referral, number, email_address, role, status, profile_picture')
+      .select('id, first_name, last_name, country_code, referral, number, email_address, role, status, profile_picture, password')
       .eq('id', id)
       .single();
 
@@ -368,6 +368,7 @@ exports.getRole = async (req, res) => {
       email_address: user.email_address,
       status: user.status,
       profile_picture: user.profile_picture,
+      password: user.password,
     });
   } catch (error) {
     res.status(500).json({ error: 'Error getting user role' });
@@ -631,7 +632,7 @@ exports.getAdvisorCredits = async (req, res) => {
 
     const { data: advisor, error } = await supabase
       .from('users')
-      .select('id, full_name, email_address, credits, points, vocher_quantity')
+      .select('id, full_name, referral, email_address, credits, points, vocher_quantity')
       .eq('id', userId)
       // .eq('role', 'advisor')
       .single();
@@ -649,6 +650,7 @@ exports.getAdvisorCredits = async (req, res) => {
       full_name: advisor.full_name,
       email_address: advisor.email_address,
       credits: advisor.credits || 0,
+      referral: advisor.referral,
       points: advisor.points || 0,
       vocher_quantity: advisor.vocher_quantity || 0
     });
@@ -698,7 +700,7 @@ exports.redeemAdvisorReward = async (req, res) => {
       return res.status(400).json({ error: 'reward_id is required' });
     }
 
-    // Step 1: Get the reward assignment by created_by and id
+    // Step 1: First try to get the reward assignment by created_by and id
     const { data: assignment, error: assignmentError } = await supabase
       .from('rewards_assignee')
       .select('*')
@@ -706,24 +708,72 @@ exports.redeemAdvisorReward = async (req, res) => {
       .eq('created_by', assigneeId)
       .single();
 
-    if(assignment.is_approved) {
-      return res.status(400).json({ error: 'Reward has already been approved' });
-    }
+    let isChallenge = false;
+    let challenge = null;
 
-    if (assignmentError) {
+    // If not found in rewards_assignee, check if it's a challenge
+    if (assignmentError && assignmentError.code === 'PGRST116') {
+      // Try to get challenge
+      const { data: challengeData, error: challengeError } = await supabase
+        .from('challenges')
+        .select('*')
+        .eq('id', reward_id)
+        .eq('sent_to_advisor', true)
+        .eq('is_approved', false)
+        .single();
+
+      if (challengeError) {
+        return res.status(404).json({ error: 'Reward assignment or challenge not found' });
+      }
+
+      if (!challengeData) {
+        return res.status(404).json({ error: 'Reward assignment or challenge not found' });
+      }
+
+      isChallenge = true;
+      challenge = challengeData;
+    } else if (assignmentError) {
       return res.status(500).json({ error: assignmentError.message });
-    }
-
-    if (!assignment) {
+    } else if (!assignment) {
       return res.status(404).json({ error: 'Reward assignment not found' });
     }
 
+    // Check if already approved
+    if (isChallenge) {
+      if (challenge.is_approved) {
+        return res.status(400).json({ error: 'Challenge has already been approved' });
+      }
+    } else {
+      if (assignment.is_approved) {
+        return res.status(400).json({ error: 'Reward has already been approved' });
+      }
+    }
+
     // Step 2: Get the reward details to check price and codes
-    const { data: reward, error: rewardError } = await supabase
-      .from('rewards')
-      .select('*')
-      .eq('id', assignment.reward_id)
-      .single();
+    let reward = null;
+    let rewardError = null;
+
+    if (isChallenge) {
+      // For challenges, get reward from challenge data
+      const { data: rewardData, error: rError } = await supabase
+        .from('rewards')
+        .select('*')
+        .eq('id', challenge.reward_id)
+        .single();
+
+      reward = rewardData;
+      rewardError = rError;
+    } else {
+      // For reward assignments, get reward from assignment data
+      const { data: rewardData, error: rError } = await supabase
+        .from('rewards')
+        .select('*')
+        .eq('id', assignment.reward_id)
+        .single();
+
+      reward = rewardData;
+      rewardError = rError;
+    }
 
     if (rewardError) {
       return res.status(500).json({ error: rewardError.message });
@@ -760,15 +810,26 @@ exports.redeemAdvisorReward = async (req, res) => {
     }
 
     const availableCodes = codes.filter(code => code && !code.is_redeemed);
-    if (availableCodes.length < assignment.quantity) {
+    
+    // Check codes availability only for reward assignments, not challenges
+    if (!isChallenge && availableCodes.length < assignment.quantity) {
       return res.status(400).json({ 
         error: `Not enough codes available. Need ${assignment.quantity}, but only ${availableCodes.length} available.` 
       });
     }
 
     // Step 4: Calculate total points needed
-    const rewardPrice = parseFloat(reward.price) || 0;
-    const totalPointsNeeded = rewardPrice * assignment.quantity;
+    let totalPointsNeeded = 0;
+    let quantity = 0;
+
+    if (isChallenge) {
+      totalPointsNeeded = parseFloat(challenge.overall_price) || 0;
+      quantity = challenge.quantity || 1;
+    } else {
+      const rewardPrice = parseFloat(reward.price) || 0;
+      totalPointsNeeded = rewardPrice * assignment.quantity;
+      quantity = assignment.quantity;
+    }
 
     // Step 5: Check if advisor has enough credits
     const { data: advisor, error: advisorError } = await supabase
@@ -791,27 +852,59 @@ exports.redeemAdvisorReward = async (req, res) => {
       });
     }
 
-    // Step 6: Select codes to redeem (take first N available codes)
-    const codesToRedeem = availableCodes.slice(0, assignment.quantity);
-    const redeemedCodes = [];
+    // Step 6: Handle code redemption
+    let redeemedCodes = [];
 
-    // Step 7: Mark selected codes as redeemed
-    codesToRedeem.forEach(codeToRedeem => {
-      const codeIndex = codes.findIndex(code => code.code === codeToRedeem.code);
-      if (codeIndex !== -1) {
-        codes[codeIndex].is_redeemed = true;
-        redeemedCodes.push(codeToRedeem.code);
+    if (!isChallenge) {
+      // For reward assignments, handle code redemption
+      const codesToRedeem = availableCodes.slice(0, assignment.quantity);
+
+      // Mark selected codes as redeemed
+      codesToRedeem.forEach(codeToRedeem => {
+        const codeIndex = codes.findIndex(code => code.code === codeToRedeem.code);
+        if (codeIndex !== -1) {
+          codes[codeIndex].is_redeemed = true;
+          redeemedCodes.push(codeToRedeem.code);
+        }
+      });
+
+      // Update rewards table with new codes array
+      const { error: updateRewardError } = await supabase
+        .from('rewards')
+        .update({ codes: codes }) // Store as JSONB object, not string
+        .eq('id', reward.id);
+
+      if (updateRewardError) {
+        return res.status(500).json({ error: updateRewardError.message });
       }
-    });
+    } else {
+      // For challenges, find available codes and mark them as redeemed
+      const codesToRedeem = availableCodes.slice(0, quantity);
+      
+      if (codesToRedeem.length < quantity) {
+        return res.status(400).json({ 
+          error: `Not enough codes available. Need ${quantity}, but only ${codesToRedeem.length} available.` 
+        });
+      }
 
-    // Step 8: Update rewards table with new codes array
-    const { error: updateRewardError } = await supabase
-      .from('rewards')
-      .update({ codes: codes }) // Store as JSONB object, not string
-      .eq('id', reward.id);
+      // Mark selected codes as redeemed and collect the actual codes
+      codesToRedeem.forEach(codeToRedeem => {
+        const codeIndex = codes.findIndex(code => code.code === codeToRedeem.code);
+        if (codeIndex !== -1) {
+          codes[codeIndex].is_redeemed = true;
+          redeemedCodes.push(codeToRedeem.code); // Store the actual code like "REWARD47"
+        }
+      });
 
-    if (updateRewardError) {
-      return res.status(500).json({ error: updateRewardError.message });
+      // Update rewards table with new codes array
+      const { error: updateRewardError } = await supabase
+        .from('rewards')
+        .update({ codes: codes })
+        .eq('id', reward.id);
+
+      if (updateRewardError) {
+        return res.status(500).json({ error: updateRewardError.message });
+      }
     }
 
     // Step 9: Deduct credits from advisor
@@ -825,25 +918,50 @@ exports.redeemAdvisorReward = async (req, res) => {
       return res.status(500).json({ error: updateCreditsError.message });
     }
 
-    // Step 10: Update reward assignment
-    const { error: updateAssignmentError } = await supabase
-      .from('rewards_assignee')
-      .update({ 
-        is_approved: true,
-        reward_code: redeemedCodes // Store as JSONB array, not string
-      })
-      .eq('id', reward_id);
+    // Step 10: Update the appropriate table based on type
+    let updateError = null;
 
-    if (updateAssignmentError) {
-      return res.status(500).json({ error: updateAssignmentError.message });
+    if (isChallenge) {
+      // Update challenge
+      const { error: updateChallengeError } = await supabase
+        .from('challenges')
+        .update({ 
+          is_approved: true,
+          is_redeemed: true,
+          reward_code: redeemedCodes // Store as JSONB array
+        })
+        .eq('id', reward_id);
+
+      updateError = updateChallengeError;
+    } else {
+      // Update reward assignment
+      const { error: updateAssignmentError } = await supabase
+        .from('rewards_assignee')
+        .update({ 
+          is_approved: true,
+          reward_code: redeemedCodes // Store as JSONB array, not string
+        })
+        .eq('id', reward_id);
+
+      updateError = updateAssignmentError;
+    }
+
+    if (updateError) {
+      return res.status(500).json({ error: updateError.message });
     }
 
     res.json({ 
-      message: 'Reward redeemed successfully',
+      message: isChallenge ? 'Challenge redeemed successfully' : 'Reward redeemed successfully',
       redeemed_codes: redeemedCodes,
       credits_deducted: totalPointsNeeded,
       remaining_credits: newCredits,
-      assignment: {
+      type: isChallenge ? 'challenge' : 'reward_assignment',
+      item: isChallenge ? {
+        ...challenge,
+        is_approved: true,
+        is_redeemed: true,
+        reward_code: redeemedCodes
+      } : {
         ...assignment,
         is_approved: true,
         reward_code: redeemedCodes
@@ -876,20 +994,39 @@ exports.getAdvisorNotifications = async (req, res) => {
       .eq('sent_to_advisor', true)
       .order('created_at', { ascending: false });
 
-    console.log(assigneeId);
-
     if (assignmentError) {
       return res.status(500).json({ error: assignmentError.message });
     }
 
-    // Get unique user IDs from assignments
-    const userIds = [...new Set(assignments.map(assignment => assignment.assignee_id))];
+    // Get challenges that need advisor approval (only challenges created by this advisor)
+    const { data: challenges, error: challengesError } = await supabase
+      .from('challenges')
+      .select(`
+        *,
+        rewards (
+          id,
+          picture,
+          name,
+          price
+        )
+      `)
+      .eq('created_by', assigneeId)
+      .eq('sent_to_advisor', true)
+      .order('created_at', { ascending: false });
 
+    if (challengesError) {
+      return res.status(500).json({ error: challengesError.message });
+    }
+
+    // Get unique user IDs from both assignments and challenges
+    const assignmentUserIds = assignments.map(assignment => assignment.assignee_id);
+    const challengeUserIds = challenges.map(challenge => challenge.user_id);
+    const allUserIds = [...new Set([...assignmentUserIds, ...challengeUserIds])];
     // Fetch user details separately
     const { data: users, error: usersError } = await supabase
       .from('users')
       .select('id, first_name, last_name, email_address, country_code, number')
-      .in('id', userIds);
+      .in('id', allUserIds);
 
     if (usersError) {
       return res.status(500).json({ error: usersError.message });
@@ -901,9 +1038,10 @@ exports.getAdvisorNotifications = async (req, res) => {
       usersMap[user.id] = user;
     });
 
-    // Transform data to include user details and status
-    const notifications = assignments.map(item => ({
+    // Transform assignments data
+    const assignmentNotifications = assignments.map(item => ({
       ...item,
+      type: 'reward_assignment',
       user: usersMap[item.assignee_id] ? {
         id: usersMap[item.assignee_id].id,
         full_name: `${usersMap[item.assignee_id].first_name} ${usersMap[item.assignee_id].last_name}`,
@@ -913,7 +1051,24 @@ exports.getAdvisorNotifications = async (req, res) => {
       status: item.is_approved ? 'approved' : (item.sent_to_advisor ? 'pending_approval' : 'new')
     }));
 
-    res.json({ notifications });
+    // Transform challenges data
+    const challengeNotifications = challenges.map(item => ({
+      ...item,
+      type: 'challenge',
+      user: usersMap[item.user_id] ? {
+        id: usersMap[item.user_id].id,
+        full_name: `${usersMap[item.user_id].first_name} ${usersMap[item.user_id].last_name}`,
+        email_address: usersMap[item.user_id].email_address,
+        contact_number: `${usersMap[item.user_id].country_code} ${usersMap[item.user_id].number}`
+      } : null,
+      status: item.is_approved ? 'approved' : (item.sent_to_advisor ? 'pending_approval' : 'new')
+    }));
+
+    // Combine and sort all notifications by created_at
+    const allNotifications = [...assignmentNotifications, ...challengeNotifications]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    res.json({ notifications: allNotifications });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1010,36 +1165,52 @@ exports.getDashboardStats = async (req, res) => {
   try {
     const userRole = req.user.role;
     const userId = req.user.id;
+    
+    // Get timeframe parameters from query
+    const { startDate, endDate, timeframe } = req.query;
+    
+    // Parse dates
+    const start = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), 0, 1); // Default to YTD
+    const end = endDate ? new Date(endDate) : new Date();
+    
+    // Adjust end date to include the full day
+    end.setHours(23, 59, 59, 999);
 
     if (userRole === 'admin') {
       // Admin gets full platform overview
       
-      // Get total users count
+      // Get total users count within timeframe
       const { data: usersData, error: usersError } = await supabase
         .from('users')
         .select('id, created_at')
-        .eq('role', 'user');
+        .eq('role', 'user')
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
 
       if (usersError) throw usersError;
 
-      // Get total advisors count
+      // Get total advisors count within timeframe
       const { data: advisorsData, error: advisorsError } = await supabase
         .from('users')
         .select('id, created_at')
         .eq('role', 'advisor')
-        .eq('status', 'active');
+        .eq('status', 'active')
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
 
       if (advisorsError) throw advisorsError;
 
-      // Get total rewards given (approved rewards)
+      // Get total rewards given (approved rewards) within timeframe
       const { data: rewardsData, error: rewardsError } = await supabase
         .from('rewards_assignee')
         .select('quantity, created_at')
-        .eq('is_approved', true);
+        .eq('is_approved', true)
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString());
 
       if (rewardsError) throw rewardsError;
 
-      // Calculate total revenue from approved rewards
+      // Calculate total revenue from approved rewards within timeframe
       const { data: rewardDetails, error: rewardDetailsError } = await supabase
         .from('rewards_assignee')
         .select(`
@@ -1049,7 +1220,9 @@ exports.getDashboardStats = async (req, res) => {
             price
           )
         `)
-        .eq('is_approved', true);
+        .eq('is_approved', true)
+        .gte('updated_at', start.toISOString())
+        .lte('updated_at', end.toISOString());
 
       if (rewardDetailsError) throw rewardDetailsError;
 
@@ -1060,53 +1233,8 @@ exports.getDashboardStats = async (req, res) => {
         totalRevenue += quantity * price;
       });
 
-      // Calculate monthly user growth for chart (last 6 months)
-      const currentDate = new Date();
-      const monthlyUsers = [];
-      
-      for (let i = 5; i >= 0; i--) {
-        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
-        
-        // Count users created in this month
-        const monthUsers = usersData.filter(user => {
-          if (!user.created_at) return false;
-          const userDate = new Date(user.created_at);
-          return userDate.getFullYear() === monthDate.getFullYear() && 
-                 userDate.getMonth() === monthDate.getMonth();
-        }).length;
-
-        monthlyUsers.push({
-          name: monthName,
-          users: monthUsers
-        });
-      }
-
-      // Calculate monthly revenue for chart (last 9 months)
-      const monthlyRevenue = [];
-      
-      for (let i = 8; i >= 0; i--) {
-        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
-        
-        // Calculate revenue for this month
-        let monthRevenue = 0;
-        rewardDetails.forEach(item => {
-          if (!item.updated_at) return;
-          const rewardDate = new Date(item.updated_at);
-          if (rewardDate.getFullYear() === monthDate.getFullYear() && 
-              rewardDate.getMonth() === monthDate.getMonth()) {
-            const quantity = item.quantity || 0;
-            const price = item.rewards?.price || 0;
-            monthRevenue += quantity * price;
-          }
-        });
-
-        monthlyRevenue.push({
-          name: monthName,
-          revenue: monthRevenue
-        });
-      }
+      // Generate chart data based on timeframe
+      const { usersOverview, revenueOverview } = generateChartData(timeframe, start, end, usersData, rewardDetails);
 
       res.json({
         stats: {
@@ -1116,15 +1244,15 @@ exports.getDashboardStats = async (req, res) => {
           totalRevenue: totalRevenue
         },
         charts: {
-          usersOverview: monthlyUsers,
-          revenueOverview: monthlyRevenue
+          usersOverview,
+          revenueOverview
         }
       });
 
     } else if (userRole === 'advisor') {
       // Advisor gets only their assigned users overview
       
-      // Get assigned users
+      // Get assigned users within timeframe
       const { data: assignedUsers, error: assignedError } = await supabase
         .from('assigned_users')
         .select(`
@@ -1138,7 +1266,14 @@ exports.getDashboardStats = async (req, res) => {
 
       if (assignedError) throw assignedError;
 
-      // Get rewards given by this advisor (approved)
+      // Filter assigned users by timeframe
+      const filteredAssignedUsers = assignedUsers.filter(assignment => {
+        if (!assignment.users?.created_at) return false;
+        const userDate = new Date(assignment.users.created_at);
+        return userDate >= start && userDate <= end;
+      });
+
+      // Get rewards given by this advisor (approved) within timeframe
       const { data: advisorRewards, error: advisorRewardsError } = await supabase
         .from('rewards_assignee')
         .select(`
@@ -1149,7 +1284,9 @@ exports.getDashboardStats = async (req, res) => {
           )
         `)
         .eq('created_by', userId)
-        .eq('is_approved', true);
+        .eq('is_approved', true)
+        .gte('updated_at', start.toISOString())
+        .lte('updated_at', end.toISOString());
 
       if (advisorRewardsError) throw advisorRewardsError;
 
@@ -1161,64 +1298,19 @@ exports.getDashboardStats = async (req, res) => {
         totalRevenue += quantity * price;
       });
 
-      // Calculate monthly user growth for assigned users (last 6 months)
-      const currentDate = new Date();
-      const monthlyUsers = [];
-      
-      for (let i = 5; i >= 0; i--) {
-        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
-        
-        // Count assigned users created in this month
-        const monthUsers = assignedUsers.filter(assignment => {
-          if (!assignment.users?.created_at) return false;
-          const userDate = new Date(assignment.users.created_at);
-          return userDate.getFullYear() === monthDate.getFullYear() && 
-                 userDate.getMonth() === monthDate.getMonth();
-        }).length;
-
-        monthlyUsers.push({
-          name: monthName,
-          users: monthUsers
-        });
-      }
-
-      // Calculate monthly revenue for this advisor (last 9 months)
-      const monthlyRevenue = [];
-      
-      for (let i = 8; i >= 0; i--) {
-        const monthDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
-        const monthName = monthDate.toLocaleDateString('en-US', { month: 'short' });
-        
-        // Calculate revenue for this month
-        let monthRevenue = 0;
-        advisorRewards.forEach(item => {
-          if (!item.updated_at) return;
-          const rewardDate = new Date(item.updated_at);
-          if (rewardDate.getFullYear() === monthDate.getFullYear() && 
-              rewardDate.getMonth() === monthDate.getMonth()) {
-            const quantity = item.quantity || 0;
-            const price = item.rewards?.price || 0;
-            monthRevenue += quantity * price;
-          }
-        });
-
-        monthlyRevenue.push({
-          name: monthName,
-          revenue: monthRevenue
-        });
-      }
+      // Generate chart data based on timeframe
+      const { usersOverview, revenueOverview } = generateChartData(timeframe, start, end, filteredAssignedUsers, advisorRewards);
 
       res.json({
         stats: {
-          totalUsers: assignedUsers.length,
+          totalUsers: filteredAssignedUsers.length,
           totalAdvisors: 1, // Just this advisor
           totalRewardsGiven: advisorRewards.reduce((sum, item) => sum + (item.quantity || 0), 0),
           totalRevenue: totalRevenue
         },
         charts: {
-          usersOverview: monthlyUsers,
-          revenueOverview: monthlyRevenue
+          usersOverview,
+          revenueOverview
         }
       });
 
@@ -1229,4 +1321,285 @@ exports.getDashboardStats = async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+};
+
+// Helper function to generate chart data based on timeframe
+const generateChartData = (timeframe, startDate, endDate, usersData, revenueData) => {
+  const usersOverview = [];
+  const revenueOverview = [];
+  
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  switch (timeframe) {
+    case 'today':
+      // Today - show hourly data
+      for (let hour = 0; hour < 24; hour++) {
+        const hourStart = new Date(start);
+        hourStart.setHours(hour, 0, 0, 0);
+        const hourEnd = new Date(start);
+        hourEnd.setHours(hour, 59, 59, 999);
+        
+        const hourUsers = usersData.filter(user => {
+          const userDate = new Date(user.created_at || user.users?.created_at);
+          return userDate >= hourStart && userDate <= hourEnd;
+        }).length;
+        
+        const hourRevenue = revenueData.filter(item => {
+          const itemDate = new Date(item.updated_at);
+          return itemDate >= hourStart && itemDate <= hourEnd;
+        }).reduce((sum, item) => {
+          const quantity = item.quantity || 0;
+          const price = item.rewards?.price || 0;
+          return sum + (quantity * price);
+        }, 0);
+        
+        usersOverview.push({
+          name: `${hour}:00`,
+          users: hourUsers
+        });
+        
+        revenueOverview.push({
+          name: `${hour}:00`,
+          revenue: hourRevenue
+        });
+      }
+      break;
+      
+    case 'wtd':
+      // Week to date - show daily data
+      for (let i = 0; i < 7; i++) {
+        const dayStart = new Date(start);
+        dayStart.setDate(start.getDate() + i);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setHours(23, 59, 59, 999);
+        
+        if (dayStart > end) break;
+        
+        const dayUsers = usersData.filter(user => {
+          const userDate = new Date(user.created_at || user.users?.created_at);
+          return userDate >= dayStart && userDate <= dayEnd;
+        }).length;
+        
+        const dayRevenue = revenueData.filter(item => {
+          const itemDate = new Date(item.updated_at);
+          return itemDate >= dayStart && itemDate <= dayEnd;
+        }).reduce((sum, item) => {
+          const quantity = item.quantity || 0;
+          const price = item.rewards?.price || 0;
+          return sum + (quantity * price);
+        }, 0);
+        
+        const dayName = dayStart.toLocaleDateString('en-US', { weekday: 'short' });
+        
+        usersOverview.push({
+          name: dayName,
+          users: dayUsers
+        });
+        
+        revenueOverview.push({
+          name: dayName,
+          revenue: dayRevenue
+        });
+      }
+      break;
+      
+    case 'mtd':
+      // Month to date - show daily data
+      const daysInMonth = new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dayStart = new Date(start.getFullYear(), start.getMonth(), day);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setHours(23, 59, 59, 999);
+        
+        if (dayStart > end) break;
+        
+        const dayUsers = usersData.filter(user => {
+          const userDate = new Date(user.created_at || user.users?.created_at);
+          return userDate >= dayStart && userDate <= dayEnd;
+        }).length;
+        
+        const dayRevenue = revenueData.filter(item => {
+          const itemDate = new Date(item.updated_at);
+          return itemDate >= dayStart && itemDate <= dayEnd;
+        }).reduce((sum, item) => {
+          const quantity = item.quantity || 0;
+          const price = item.rewards?.price || 0;
+          return sum + (quantity * price);
+        }, 0);
+        
+        usersOverview.push({
+          name: day.toString(),
+          users: dayUsers
+        });
+        
+        revenueOverview.push({
+          name: day.toString(),
+          revenue: dayRevenue
+        });
+      }
+      break;
+      
+    case 'custom':
+      // Custom range - intelligently determine granularity based on range size
+      const daysDiff = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+      
+      if (daysDiff <= 7) {
+        // 7 days or less - show daily data
+        for (let i = 0; i <= daysDiff; i++) {
+          const dayStart = new Date(start);
+          dayStart.setDate(start.getDate() + i);
+          const dayEnd = new Date(dayStart);
+          dayEnd.setHours(23, 59, 59, 999);
+          
+          if (dayStart > end) break;
+          
+          const dayUsers = usersData.filter(user => {
+            const userDate = new Date(user.created_at || user.users?.created_at);
+            return userDate >= dayStart && userDate <= dayEnd;
+          }).length;
+          
+          const dayRevenue = revenueData.filter(item => {
+            const itemDate = new Date(item.updated_at);
+            return itemDate >= dayStart && itemDate <= dayEnd;
+          }).reduce((sum, item) => {
+            const quantity = item.quantity || 0;
+            const price = item.rewards?.price || 0;
+            return sum + (quantity * price);
+          }, 0);
+          
+          const dayName = dayStart.toLocaleDateString('en-US', { 
+            month: 'short', 
+            day: 'numeric' 
+          });
+          
+          usersOverview.push({
+            name: dayName,
+            users: dayUsers
+          });
+          
+          revenueOverview.push({
+            name: dayName,
+            revenue: dayRevenue
+          });
+        }
+      } else if (daysDiff <= 90) {
+        // 8-90 days - show weekly data
+        const weeks = Math.ceil(daysDiff / 7);
+        for (let week = 0; week < weeks; week++) {
+          const weekStart = new Date(start);
+          weekStart.setDate(start.getDate() + (week * 7));
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekStart.getDate() + 6);
+          weekEnd.setHours(23, 59, 59, 999);
+          
+          if (weekStart > end) break;
+          
+          const weekUsers = usersData.filter(user => {
+            const userDate = new Date(user.created_at || user.users?.created_at);
+            return userDate >= weekStart && userDate <= weekEnd;
+          }).length;
+          
+          const weekRevenue = revenueData.filter(item => {
+            const itemDate = new Date(item.updated_at);
+            return itemDate >= weekStart && itemDate <= weekEnd;
+          }).reduce((sum, item) => {
+            const quantity = item.quantity || 0;
+            const price = item.rewards?.price || 0;
+            return sum + (quantity * price);
+          }, 0);
+          
+          const weekName = `Week ${week + 1}`;
+          
+          usersOverview.push({
+            name: weekName,
+            users: weekUsers
+          });
+          
+          revenueOverview.push({
+            name: weekName,
+            revenue: weekRevenue
+          });
+        }
+      } else {
+        // More than 90 days - show monthly data
+        const months = [];
+        let currentDate = new Date(start);
+        
+        while (currentDate <= end) {
+          const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+          const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+          
+          if (monthStart > end) break;
+          
+          const monthUsers = usersData.filter(user => {
+            const userDate = new Date(user.created_at || user.users?.created_at);
+            return userDate >= monthStart && userDate <= monthEnd;
+          }).length;
+          
+          const monthRevenue = revenueData.filter(item => {
+            const itemDate = new Date(item.updated_at);
+            return itemDate >= monthStart && itemDate <= monthEnd;
+          }).reduce((sum, item) => {
+            const quantity = item.quantity || 0;
+            const price = item.rewards?.price || 0;
+            return sum + (quantity * price);
+          }, 0);
+          
+          const monthName = monthStart.toLocaleDateString('en-US', { month: 'short' });
+          
+          usersOverview.push({
+            name: monthName,
+            users: monthUsers
+          });
+          
+          revenueOverview.push({
+            name: monthName,
+            revenue: monthRevenue
+          });
+          
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
+      }
+      break;
+      
+    case 'ytd':
+    default:
+      // Year to date - show monthly data
+      for (let month = 0; month < 12; month++) {
+        const monthStart = new Date(start.getFullYear(), month, 1);
+        const monthEnd = new Date(start.getFullYear(), month + 1, 0, 23, 59, 59, 999);
+        
+        if (monthStart > end) break;
+        
+        const monthUsers = usersData.filter(user => {
+          const userDate = new Date(user.created_at || user.users?.created_at);
+          return userDate >= monthStart && userDate <= monthEnd;
+        }).length;
+        
+        const monthRevenue = revenueData.filter(item => {
+          const itemDate = new Date(item.updated_at);
+          return itemDate >= monthStart && itemDate <= monthEnd;
+        }).reduce((sum, item) => {
+          const quantity = item.quantity || 0;
+          const price = item.rewards?.price || 0;
+          return sum + (quantity * price);
+        }, 0);
+        
+        const monthName = monthStart.toLocaleDateString('en-US', { month: 'short' });
+        
+        usersOverview.push({
+          name: monthName,
+          users: monthUsers
+        });
+        
+        revenueOverview.push({
+          name: monthName,
+          revenue: monthRevenue
+        });
+      }
+      break;
+  }
+  
+  return { usersOverview, revenueOverview };
 };

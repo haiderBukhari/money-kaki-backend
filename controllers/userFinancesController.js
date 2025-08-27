@@ -435,18 +435,54 @@ exports.getGoals = async (req, res) => {
   res.json({ goals });
 };
 
-// Get current user's monthly income
+// Get current user's monthly income and total savings
 exports.getIncome = async (req, res) => {
   try {
     const userId = req.user.id;
+    
+    // Get user finances data
     const { data, error } = await supabase
       .from('user_finances')
       .select('monthly_income, monthly_expense, selected_category, goal_to_achieve, amount_to_save, today_spend, transaction')
       .eq('user_id', userId)
       .single();
+    
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'No income data found for user' });
-    res.json({ monthly_income: data.monthly_income, monthly_expense: data.monthly_expense, selected_category: data.selected_category, goal_to_achieve: data.goal_to_achieve, amount_to_save: data.amount_to_save, today_spend: data.today_spend, transaction: data.transaction });
+
+    // Calculate total savings from goals
+    let totalSavings = 0;
+    
+    // Get all goals for the user
+    const { data: goals, error: goalsError } = await supabase
+      .from('goals')
+      .select('id')
+      .eq('user_id', userId);
+
+    if (!goalsError && goals && goals.length > 0) {
+      const goalIds = goals.map(goal => goal.id);
+      
+      // Get all savings for these goals
+      const { data: savings, error: savingsError } = await supabase
+        .from('savings')
+        .select('amount_saved')
+        .in('goal_id', goalIds);
+
+      if (!savingsError && savings) {
+        totalSavings = savings.reduce((sum, saving) => sum + parseFloat(saving.amount_saved), 0);
+      }
+    }
+
+    res.json({ 
+      monthly_income: data.monthly_income, 
+      monthly_expense: data.monthly_expense, 
+      selected_category: data.selected_category, 
+      goal_to_achieve: data.goal_to_achieve, 
+      amount_to_save: data.amount_to_save, 
+      today_spend: data.today_spend, 
+      transaction: data.transaction,
+      total_savings: totalSavings
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
