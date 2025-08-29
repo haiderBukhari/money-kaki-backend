@@ -271,6 +271,7 @@ exports.createTransactionFromImage = async (req, res) => {
 
     // Available categories for the AI to choose from
     const categories = [
+      "Special Promos",
       "Food & Drinks",
       "Car",
       "Shopping",
@@ -336,6 +337,7 @@ exports.createTransactionFromText = async (req, res) => {
 
     // Available categories for the AI to choose from
     const categories = [
+      "Special Promos",
       "Food & Drinks",
       "Car",
       "Shopping",
@@ -407,6 +409,7 @@ exports.getTransactions = async (req, res) => {
 
 exports.getCategories = async (req, res) => {
   const categories = [
+    "Special Promos",
     "Food & Drinks",
     "Car",
     "Shopping",

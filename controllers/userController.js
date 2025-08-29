@@ -305,25 +305,146 @@ exports.editUser = async (req, res) => {
     return res.status(400).json({ error: 'No fields to update' });
   }
 
-  const numericFields = ['credits', 'points', 'vocher_quantity'];
-  const processedFields = { ...updateFields };
-  numericFields.forEach(field => {
-    if (processedFields[field] === '') {
-      processedFields[field] = null;
+  try {
+    // Separate user fields from finance fields
+    const userFields = {};
+    const financeFields = {};
+    
+    Object.keys(updateFields).forEach(key => {
+      if (['monthly_income', 'monthly_expense'].includes(key)) {
+        financeFields[key] = updateFields[key];
+      } else {
+        userFields[key] = updateFields[key];
+      }
+    });
+
+    // Handle contact_number field if it exists (for backward compatibility)
+    if (userFields.contact_number) {
+      const contactParts = userFields.contact_number.trim().split(' ');
+      userFields.country_code = contactParts[0] || '+65';
+      userFields.number = contactParts.slice(1).join(' ') || userFields.contact_number;
+      delete userFields.contact_number;
     }
-  });
 
-  const { data, error } = await supabase
-    .from('users')
-    .update(processedFields)
-    .eq('id', id)
-    .select();
+    // Process numeric fields for user table
+    const numericFields = ['credits', 'points', 'vocher_quantity'];
+    numericFields.forEach(field => {
+      if (userFields[field] === '') {
+        userFields[field] = null;
+      }
+    });
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
+    // Update user table if there are user fields
+    if (Object.keys(userFields).length > 0) {
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .update(userFields)
+        .eq('id', id)
+        .select();
+
+      if (userError) {
+        return res.status(500).json({ error: userError.message });
+      }
+    }
+
+    // Update user_finances table if there are finance fields
+    if (Object.keys(financeFields).length > 0) {
+      // Check if user_finances record exists
+      const { data: existingFinance, error: checkError } = await supabase
+        .from('user_finances')
+        .select('id')
+        .eq('user_id', id)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 is "not found"
+        return res.status(500).json({ error: checkError.message });
+      }
+
+      if (existingFinance) {
+        // Update existing record
+        const { error: financeError } = await supabase
+          .from('user_finances')
+          .update(financeFields)
+          .eq('user_id', id);
+
+        if (financeError) {
+          return res.status(500).json({ error: financeError.message });
+        }
+      } else {
+        // Create new record
+        const { error: financeError } = await supabase
+          .from('user_finances')
+          .insert({
+            user_id: id,
+            ...financeFields
+          });
+
+        if (financeError) {
+          return res.status(500).json({ error: financeError.message });
+        }
+      }
+    }
+
+    // Get updated user data with the same format as getUserById
+    const { data: updatedUser, error: getError } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role')
+      .eq('id', id)
+      .single();
+
+    if (getError) {
+      return res.status(500).json({ error: getError.message });
+    }
+
+    // Get user finances
+    const { data: finances, error: financesError } = await supabase
+      .from('user_finances')
+      .select('monthly_income, monthly_expense')
+      .eq('user_id', id)
+      .single();
+
+    // Get voucher count from rewards_assignee - include both approved and redeemed
+    const { data: voucherData, error: voucherError } = await supabase
+      .from('rewards_assignee')
+      .select('quantity, is_approved, is_redeemed')
+      .eq('assignee_id', id);
+
+    let totalVouchers = 0;
+    let approvedVouchers = 0;
+    let redeemedVouchers = 0;
+
+    if (voucherData) {
+      voucherData.forEach(item => {
+        const quantity = item.quantity || 0;
+        totalVouchers += quantity;
+        if (item.is_approved) {
+          approvedVouchers += quantity;
+        }
+        if (item.is_redeemed) {
+          redeemedVouchers += quantity;
+        }
+      });
+    }
+
+    // Combine the data
+    const userData = {
+      ...updatedUser,
+      full_name: `${updatedUser.first_name || ''} ${updatedUser.last_name || ''}`.trim(),
+      contact_number: `${updatedUser.country_code || ''} ${updatedUser.number || ''}`.trim(),
+      monthly_income: finances?.monthly_income || 0,
+      monthly_expense: finances?.monthly_expense || 0,
+      voucher_count: totalVouchers,
+      voucher_details: {
+        total: totalVouchers,
+        approved: approvedVouchers,
+        redeemed: redeemedVouchers
+      }
+    };
+
+    res.json({ message: 'User updated successfully', user: userData });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-
-  res.json({ message: 'User updated successfully', user: data[0] });
 };
 
 exports.getUserById = async (req, res) => {
@@ -332,21 +453,66 @@ exports.getUserById = async (req, res) => {
     return res.status(400).json({ error: 'User id is required' });
   }
 
-  const { data, error } = await supabase
-    .from('users')
-    .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity')
-    .eq('id', id)
-    .eq('role', 'user')
-    .single();
+  try {
+    // Get user basic info
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, first_name, last_name, email_address, country_code, number, status, credits, points, profile_picture, vocher_quantity, role')
+      .eq('id', id)
+      .eq('role', 'user')
+      .single();
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-  if (!data) {
-    return res.status(404).json({ error: 'User not found' });
-  }
+    if (userError) {
+      return res.status(500).json({ error: userError.message });
+    }
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-  res.json({ user: data });
+    // Get user finances
+    const { data: finances, error: financesError } = await supabase
+      .from('user_finances')
+      .select('monthly_income, monthly_expense')
+      .eq('user_id', id)
+      .single();
+
+    // Get voucher count from rewards_assignee - include both approved and redeemed
+    const { data: voucherData, error: voucherError } = await supabase
+      .from('rewards_assignee')
+      .select('quantity, is_approved, is_redeemed')
+      .eq('assignee_id', id);
+
+    let totalVouchers = 0;
+    let approvedVouchers = 0;
+    let redeemedVouchers = 0;
+
+    if (voucherData) {
+      voucherData.forEach(item => {
+        const quantity = item.quantity || 0;
+        totalVouchers += quantity;
+        if (item.is_approved) {
+          approvedVouchers += quantity;
+        }
+        if (item.is_redeemed) {
+          redeemedVouchers += quantity;
+        }
+      });
+    }
+
+    // Combine the data
+    const userData = {
+      ...user,
+      full_name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+      contact_number: `${user.country_code || ''} ${user.number || ''}`.trim(),
+      monthly_income: finances?.monthly_income || 0,
+      monthly_expense: finances?.monthly_expense || 0,
+      voucher_count: totalVouchers
+    };
+
+    res.json({ user: userData });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 };
 
 exports.getInactiveUsers = async (req, res) => {
@@ -761,7 +927,31 @@ exports.getUsersByRole = async (req, res) => {
         }
       });
 
-      // Transform the data to include actual income, expense, and voucher values
+      // Get advisor assignments for all users
+      const { data: assignedData, error: assignedError } = await supabase
+        .from('assigned_users')
+        .select(`
+          user_id,
+          mentor_id,
+          users!assigned_users_mentor_id_fkey (
+            first_name,
+            last_name,
+            full_name
+          )
+        `)
+        .in('user_id', userIds);
+
+      if (assignedError) throw assignedError;
+
+      // Create map for advisor assignments
+      const advisorMap = {};
+      assignedData.forEach(assignment => {
+        if (assignment.users) {
+          advisorMap[assignment.user_id] = assignment.users.full_name? assignment.users.full_name : (assignment.users.first_name) ? `${assignment.users.first_name} ${assignment.users.last_name}` : 'Not Assigned';
+        }
+      });
+
+      // Transform the data to include actual income, expense, voucher values, and advisor
       const users = data.map(user => ({
         id: user.id,
         full_name: `${user.first_name} ${user.last_name}`,
@@ -770,7 +960,8 @@ exports.getUsersByRole = async (req, res) => {
         income: financesMap[user.id]?.monthly_income || 0,
         expense: financesMap[user.id]?.monthly_expense || 0,
         points: user.points,
-        vocher: voucherMap[user.id] || 0
+        vocher: voucherMap[user.id] || 0,
+        advisor: advisorMap[user.id] || 'Not Assigned'
       }));
 
       res.json({ users });
@@ -839,7 +1030,8 @@ exports.getUsersByRole = async (req, res) => {
         income: financesMap[assignment.users.id]?.monthly_income || 0,
         expense: financesMap[assignment.users.id]?.monthly_expense || 0,
         points: assignment.users?.points,
-        vocher: voucherMap[assignment.users.id] || 0
+        vocher: voucherMap[assignment.users.id] || 0,
+        advisor: 'You' // Since this is the advisor's view, they are the advisor for these users
       }));
 
       res.json({ users });
@@ -898,7 +1090,7 @@ exports.getUserAdvisors = async (req, res) => {
     // Get all advisors
     const { data: advisors, error: advisorsError } = await supabase
       .from('users')
-      .select('id, full_name')
+      .select('id, full_name, email_address')
       .eq('role', 'advisor')
       .eq('status', 'active');
 

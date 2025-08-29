@@ -20,13 +20,35 @@ exports.createGoal = async (req, res) => {
 exports.getGoals = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { data, error } = await supabase
+    const { data: goals, error } = await supabase
       .from('goals')
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
+    
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ goals: data });
+    
+    // Get savings for each goal
+    const goalsWithSavings = await Promise.all(goals.map(async (goal) => {
+      const { data: savings } = await supabase
+        .from('savings')
+        .select('amount_saved')
+        .eq('goal_id', goal.id);
+      
+      const totalSaved = savings.reduce((sum, saving) => sum + (saving.amount_saved || 0), 0);
+      const isExceeded = totalSaved > goal.amount_to_save;
+      const exceededMessage = isExceeded ? "The amount you're saving has exceeded your target." : null;
+      
+      return {
+        ...goal,
+        total_saved: totalSaved,
+        remaining_amount: Math.max(0, goal.amount_to_save - totalSaved),
+        is_exceeded: isExceeded,
+        exceeded_message: exceededMessage
+      };
+    }));
+    
+    res.json({ goals: goalsWithSavings });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -73,12 +95,41 @@ exports.createSaving = async (req, res) => {
   try {
     const { goal_id, amount_saved, title } = req.body;
     if (!goal_id || !amount_saved || !title) return res.status(400).json({ error: 'All fields required' });
-    const { data, error } = await supabase
+    
+    // Create the saving
+    const { data: saving, error } = await supabase
       .from('savings')
       .insert({ goal_id, amount_saved, title })
       .select('*');
+    
     if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json({ saving: data[0] });
+    
+    // Get updated goal information with savings
+    const { data: goal } = await supabase
+      .from('goals')
+      .select('*')
+      .eq('id', goal_id)
+      .single();
+    
+    const { data: allSavings } = await supabase
+      .from('savings')
+      .select('amount_saved')
+      .eq('goal_id', goal_id);
+    
+    const totalSaved = allSavings.reduce((sum, s) => sum + (s.amount_saved || 0), 0);
+    const isExceeded = totalSaved > goal.amount_to_save;
+    const exceededMessage = isExceeded ? "The amount you're saving has exceeded your target." : null;
+    
+    res.status(201).json({ 
+      saving: saving[0],
+      goal: {
+        ...goal,
+        total_saved: totalSaved,
+        remaining_amount: Math.max(0, goal.amount_to_save - totalSaved),
+        is_exceeded: isExceeded,
+        exceeded_message: exceededMessage
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -88,13 +139,41 @@ exports.getSavings = async (req, res) => {
   try {
     const { goal_id } = req.params;
     if (!goal_id) return res.status(400).json({ error: 'goal_id required' });
-    const { data, error } = await supabase
+    
+    // Get goal information
+    const { data: goal, error: goalError } = await supabase
+      .from('goals')
+      .select('*')
+      .eq('id', goal_id)
+      .single();
+    
+    if (goalError) return res.status(500).json({ error: goalError.message });
+    if (!goal) return res.status(404).json({ error: 'Goal not found' });
+    
+    // Get savings for this goal
+    const { data: savings, error: savingsError } = await supabase
       .from('savings')
       .select('*')
       .eq('goal_id', goal_id)
       .order('created_at', { ascending: false });
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ savings: data });
+    
+    if (savingsError) return res.status(500).json({ error: savingsError.message });
+    
+    // Calculate total savings
+    const totalSaved = savings.reduce((sum, saving) => sum + (saving.amount_saved || 0), 0);
+    
+    // Check if savings exceed goal
+    const isExceeded = totalSaved > goal.amount_to_save;
+    const exceededMessage = isExceeded ? "The amount you're saving has exceeded your target." : null;
+    
+    res.json({ 
+      savings: savings,
+      goal: goal,
+      total_saved: totalSaved,
+      remaining_amount: Math.max(0, goal.amount_to_save - totalSaved),
+      is_exceeded: isExceeded,
+      exceeded_message: exceededMessage
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -105,13 +184,51 @@ exports.updateSaving = async (req, res) => {
     const { id } = req.params;
     const { amount_saved, title } = req.body;
     if (!id) return res.status(400).json({ error: 'Saving id required' });
-    const { data, error } = await supabase
+    
+    // Get the saving to find the goal_id
+    const { data: existingSaving } = await supabase
+      .from('savings')
+      .select('goal_id')
+      .eq('id', id)
+      .single();
+    
+    if (!existingSaving) return res.status(404).json({ error: 'Saving not found' });
+    
+    // Update the saving
+    const { data: saving, error } = await supabase
       .from('savings')
       .update({ amount_saved, title })
       .eq('id', id)
       .select('*');
+    
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ saving: data[0] });
+    
+    // Get updated goal information with savings
+    const { data: goal } = await supabase
+      .from('goals')
+      .select('*')
+      .eq('id', existingSaving.goal_id)
+      .single();
+    
+    const { data: allSavings } = await supabase
+      .from('savings')
+      .select('amount_saved')
+      .eq('goal_id', existingSaving.goal_id);
+    
+    const totalSaved = allSavings.reduce((sum, s) => sum + (s.amount_saved || 0), 0);
+    const isExceeded = totalSaved > goal.amount_to_save;
+    const exceededMessage = isExceeded ? "The amount you're saving has exceeded your target." : null;
+    
+    res.json({ 
+      saving: saving[0],
+      goal: {
+        ...goal,
+        total_saved: totalSaved,
+        remaining_amount: Math.max(0, goal.amount_to_save - totalSaved),
+        is_exceeded: isExceeded,
+        exceeded_message: exceededMessage
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -121,12 +238,50 @@ exports.deleteSaving = async (req, res) => {
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ error: 'Saving id required' });
+    
+    // Get the saving to find the goal_id before deleting
+    const { data: existingSaving } = await supabase
+      .from('savings')
+      .select('goal_id')
+      .eq('id', id)
+      .single();
+    
+    if (!existingSaving) return res.status(404).json({ error: 'Saving not found' });
+    
+    // Delete the saving
     const { error } = await supabase
       .from('savings')
       .delete()
       .eq('id', id);
+    
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ message: 'Saving deleted' });
+    
+    // Get updated goal information with savings
+    const { data: goal } = await supabase
+      .from('goals')
+      .select('*')
+      .eq('id', existingSaving.goal_id)
+      .single();
+    
+    const { data: allSavings } = await supabase
+      .from('savings')
+      .select('amount_saved')
+      .eq('goal_id', existingSaving.goal_id);
+    
+    const totalSaved = allSavings.reduce((sum, s) => sum + (s.amount_saved || 0), 0);
+    const isExceeded = totalSaved > goal.amount_to_save;
+    const exceededMessage = isExceeded ? "The amount you're saving has exceeded your target." : null;
+    
+    res.json({ 
+      message: 'Saving deleted',
+      goal: {
+        ...goal,
+        total_saved: totalSaved,
+        remaining_amount: Math.max(0, goal.amount_to_save - totalSaved),
+        is_exceeded: isExceeded,
+        exceeded_message: exceededMessage
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
