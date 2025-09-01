@@ -2,12 +2,47 @@ const supabase = require('../supabaseClient');
 const { sendAdvisorVerificationEmail, sendPasswordResetEmail } = require('./emailService');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
+const AWS = require('aws-sdk');
+const multer = require('multer');
+const multerS3 = require('multer-s3');
 
 const client = new OAuth2Client(
   process.env.OAUTH_CLIENT_ID,
   process.env.OAUTH_CLIENT_SECRET,
   process.env.REDIRECT_URI
 );
+
+// Configure AWS with environment variables
+AWS.config.update({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION
+});
+
+const s3 = new AWS.S3();
+
+// Configure multer for S3 upload
+const upload = multer({
+  storage: multerS3({
+    s3,
+    bucket: process.env.AWS_S3_BUCKET,
+    key: (req, file, cb) => {
+      const uniqueName = `profile-images/${Date.now()}-${file.originalname}`;
+      cb(null, uniqueName);
+    }
+  }),
+  fileFilter: (req, file, cb) => {
+    // Only accept image files
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Invalid file type – only images allowed"), false);
+    }
+  },
+  limits: { 
+    fileSize: 5 * 1024 * 1024 // limit: 5MB
+  }
+});
 
 function generateEmailCode() {
   return Math.floor(1000 + Math.random() * 9000).toString();
@@ -16,6 +51,8 @@ function generateEmailCode() {
 function generateResetCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
+
+
 
 // Helper to get full_name from first_name and last_name
 function getFullName(user) {
@@ -1817,3 +1854,58 @@ exports.getUserRevenue = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+/**
+ * Upload image to AWS S3
+ * POST /api/users/upload-image
+ * 
+ * Headers:
+ * - Authorization: Bearer <token>
+ * 
+ * Body: multipart/form-data
+ * - image: Image file (max 5MB, images only)
+ * 
+ * Returns:
+ * - Success: { message, image_url, image_key }
+ * - Error: { error: "error message" }
+ */
+exports.uploadProfileImage = async (req, res) => {
+  try {
+    // Validate environment variables
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY || !process.env.AWS_REGION || !process.env.AWS_S3_BUCKET) {
+      return res.status(500).json({ error: 'AWS configuration is incomplete. Please check environment variables.' });
+    }
+
+    // Use the multer middleware to handle file upload
+    upload.single('image')(req, res, async (err) => {
+      if (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ error: 'File size too large. Maximum size is 5MB.' });
+          }
+          return res.status(400).json({ error: `Upload error: ${err.message}` });
+        }
+        if (err.message === 'Invalid file type – only images allowed') {
+          return res.status(400).json({ error: 'Only image files are allowed.' });
+        }
+        return res.status(500).json({ error: `Upload failed: ${err.message}` });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No image file provided' });
+      }
+
+      const imageUrl = req.file.location; // S3 URL
+      const imageKey = req.file.key; // S3 object key
+
+      res.json({
+        message: 'Image uploaded successfully',
+        image_url: imageUrl,
+        image_key: imageKey
+      });
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+

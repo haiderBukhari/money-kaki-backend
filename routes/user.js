@@ -9,6 +9,7 @@ router.post('/create-password', userController.createPassword);
 router.get('/login', userController.loginUser);
 router.post('/oauth-login', userController.oauthLogin);
 router.get('/role', verifyToken, userController.getRole);
+router.post('/upload-image', userController.uploadProfileImage);
 
 router.get('/profile', verifyToken, userController.getProfile);
 router.put('/profile', verifyToken, userController.updateProfile);
@@ -40,5 +41,6 @@ router.put('/:id', userController.editUser);
 router.get('/:id', userController.getUserById);
 router.delete('/:id', userController.deleteUser);
 
+// Image upload route
 
 module.exports = router; 
