@@ -7,6 +7,7 @@ const userRoutes = require('./routes/user');
 const privacyPolicyRoutes = require('./routes/privacyPolicy');
 const termsConditionsRoutes = require('./routes/termsConditions');
 const userFinancesRoutes = require('./routes/userFinances');
+const analyticsRoutes = require('./routes/analytics');
 const { scheduleChallengeCronJob } = require('./utils/cronJobs');
 
 const app = express();
@@ -33,6 +34,7 @@ app.use('/api/user', userRoutes);
 app.use('/api/privacy-policy', privacyPolicyRoutes);
 app.use('/api/terms-conditions', termsConditionsRoutes);
 app.use('/api/goals-savings', require('./routes/goals'));
+app.use('/api/analytics', analyticsRoutes);
 
 // Initialize cron jobs
 scheduleChallengeCronJob();

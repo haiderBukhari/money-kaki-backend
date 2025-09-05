@@ -116,7 +116,7 @@ async function extractMonthlyIncome(prompt) {
       messages: [
         {
           role: "system",
-          content: "You are a financial data extractor. Extract the monthly income amount from the user's text. Return only a number. If no income is mentioned, return 0. Examples: 'my monthly income is 1000' → 1000, 'I earn 1500 per month' → 1500, 'salary is 2000 monthly' → 2000"
+          content: "You are a financial data extractor. Extract the monthly income amount from the user's text. Return only a number. If no income is mentioned, return the income in number, and remember our main task is to return the number only... Examples: 'my monthly income is 1000' → 1000, 'I earn 1500 per month' → 1500, 'salary is 2000 monthly' → 2000"
         },
         {
           role: "user",
@@ -144,7 +144,7 @@ async function extractMonthlyExpense(prompt) {
       messages: [
         {
           role: "system",
-          content: "You are a financial data extractor. Extract the monthly expense amount from the user's text. Return only a number. If no expense is mentioned, return 0. Examples: 'I spend 800 monthly' → 800, 'monthly expenses are 1200' → 1200, 'costs me 600 per month' → 600"
+          content: "You are a financial data extractor. Extract the monthly expense amount from the user's text. Return only a number. If no expense is mentioned, return the expense in number, and remember our main task is to return the number only... Examples: 'I spend 800 monthly' → 800, 'monthly expenses are 1200' → 1200, 'costs me 600 per month' → 600"
         },
         {
           role: "user",
@@ -172,7 +172,7 @@ async function extractAmountToSave(prompt) {
       messages: [
         {
           role: "system",
-          content: "You are a financial data extractor. Extract the amount to save from the user's text. Return only a number. If no savings amount is mentioned, return 0. Examples: 'I want to save 200 monthly' → 200, 'save 300 per month' → 300, 'monthly savings goal is 500' → 500"
+          content: "You are a financial data extractor. Extract the amount to save from the user's text. Return only a number. If no savings amount is mentioned, return the savings in number, and remember our main task is to return the number only... Examples: 'I want to save 200 monthly' → 200, 'save 300 per month' → 300, 'monthly savings goal is 500' → 500"
         },
         {
           role: "user",
