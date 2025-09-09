@@ -65,7 +65,7 @@ function getFullName(user) {
 
 exports.createUser = async (req, res) => {
   const { first_name, last_name, email_address, country_code, number, referal_code, birthday_date, profile_picture } = req.body;
-  if (!first_name || !last_name || !email_address || !birthday_date) {
+  if (!first_name || !last_name || !email_address) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
