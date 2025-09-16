@@ -7,6 +7,8 @@ const client = new OpenAI({
 // Extract transaction details from image using OCR
 async function extractTransactionFromImage(imageUrl, categories) {
   try {
+    const today = new Date().toISOString().split('T')[0];
+    
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -24,6 +26,7 @@ async function extractTransactionFromImage(imageUrl, categories) {
 }
 
 Available categories: ${categories.join(', ')}
+Today's date: ${today}
 
 Rules:
 - amount: Extract the monetary value as a number
@@ -31,7 +34,7 @@ Rules:
 - title: Create a brief, descriptive title for the transaction
 - description: Provide a detailed description of what the transaction is for
 - category: Choose the most appropriate category from the provided list
-- date: If date is visible, use it; otherwise use today's date in YYYY-MM-DD format
+- date: If date is visible, use it; otherwise use today's date (${today})
 - If any field cannot be determined, use reasonable defaults
 - IMPORTANT: Return ONLY the JSON object, no markdown, no code blocks, no explanations`
         },
@@ -195,6 +198,8 @@ async function extractAmountToSave(prompt) {
 // Extract transaction details from text
 async function extractTransactionFromText(prompt, categories) {
   try {
+    const today = new Date().toISOString().split('T')[0];
+    
     const response = await client.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -212,6 +217,7 @@ async function extractTransactionFromText(prompt, categories) {
 }
 
 Available categories: ${categories.join(', ')}
+Today's date: ${today}
 
 Rules:
 - amount: Extract the monetary value as a number
@@ -219,7 +225,7 @@ Rules:
 - title: Create a brief, descriptive title for the transaction
 - description: Provide a detailed description of what the transaction is for
 - category: Choose the most appropriate category from the provided list
-- date: If date is visible, use it; otherwise use today's date in YYYY-MM-DD format
+- date: If date is visible, use it; otherwise use today's date (${today})
 - If any field cannot be determined, use reasonable defaults
 - IMPORTANT: Return ONLY the JSON object, no markdown, no code blocks, no explanations`
         },

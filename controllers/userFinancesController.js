@@ -235,6 +235,31 @@ exports.createTransactionAI = async (req, res) => {
       .insert(inserts)
       .select('*');
     if (error) return res.status(500).json({ error: error.message });
+
+    // Add income transactions to wallet
+    const incomeTransactions = transactions.filter(tx => tx.type === 'income');
+    if (incomeTransactions.length > 0) {
+      const totalIncome = incomeTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+      
+      // Get current wallet balance
+      const { data: userFinances, error: financeError } = await supabase
+        .from('user_finances')
+        .select('wallet')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!financeError && userFinances) {
+        const currentWallet = userFinances.wallet || 0;
+        const newWalletAmount = currentWallet + totalIncome;
+        
+        // Update wallet
+        await supabase
+          .from('user_finances')
+          .update({ wallet: newWalletAmount })
+          .eq('user_id', userId);
+      }
+    }
+
     res.status(201).json({ transactions: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -253,6 +278,28 @@ exports.createTransaction = async (req, res) => {
       .insert({user_id: userId, amount, type, title, description, category, date})
       .select('*');
     if (error) return res.status(500).json({ error: error.message });
+
+    // Add income to wallet
+    if (type === 'income') {
+      // Get current wallet balance
+      const { data: userFinances, error: financeError } = await supabase
+        .from('user_finances')
+        .select('wallet')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!financeError && userFinances) {
+        const currentWallet = userFinances.wallet || 0;
+        const newWalletAmount = currentWallet + amount;
+        
+        // Update wallet
+        await supabase
+          .from('user_finances')
+          .update({ wallet: newWalletAmount })
+          .eq('user_id', userId);
+      }
+    }
+
     res.status(201).json({ transactions: data });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -311,6 +358,27 @@ exports.createTransactionFromImage = async (req, res) => {
 
     if (error) {
       return res.status(500).json({ error: error.message });
+    }
+
+    // Add income to wallet
+    if (extractedTransaction.type === 'income') {
+      // Get current wallet balance
+      const { data: userFinances, error: financeError } = await supabase
+        .from('user_finances')
+        .select('wallet')
+        .eq('user_id', userId)
+        .single();
+      
+      if (!financeError && userFinances) {
+        const currentWallet = userFinances.wallet || 0;
+        const newWalletAmount = currentWallet + extractedTransaction.amount;
+        
+        // Update wallet
+        await supabase
+          .from('user_finances')
+          .update({ wallet: newWalletAmount })
+          .eq('user_id', userId);
+      }
     }
 
     res.status(201).json({ 

@@ -79,7 +79,6 @@ exports.createUser = async (req, res) => {
     return res.status(409).json({ error: 'User already exists with this email' });
   }
 
-  // If referral code is provided, validate it
   let mentorId = null;
   if (referal_code) {
     const { data: mentor, error: mentorError } = await supabase

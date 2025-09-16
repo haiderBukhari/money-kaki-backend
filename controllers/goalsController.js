@@ -93,8 +93,36 @@ exports.deleteGoal = async (req, res) => {
 // SAVINGS CRUD
 exports.createSaving = async (req, res) => {
   try {
-    const { goal_id, amount_saved, title } = req.body;
+    const { goal_id, amount_saved, title, save_in_wallet = false } = req.body;
     if (!goal_id || !amount_saved || !title) return res.status(400).json({ error: 'All fields required' });
+    
+    const userId = req.user.id;
+    
+    if (save_in_wallet) {
+      // Get current user finances
+      const { data: userFinances, error: financeError } = await supabase
+        .from('user_finances')
+        .select('wallet')
+        .eq('user_id', userId)
+        .single();
+      
+      if (financeError) {
+        return res.status(500).json({ error: 'Error fetching user finances' });
+      }
+      
+      const currentWallet = userFinances?.wallet || 0;
+      
+      // Deduct amount from wallet (allows negative balance)
+      const newWalletAmount = currentWallet - amount_saved;
+      const { error: updateError } = await supabase
+        .from('user_finances')
+        .update({ wallet: newWalletAmount })
+        .eq('user_id', userId);
+      
+      if (updateError) {
+        return res.status(500).json({ error: 'Error updating wallet' });
+      }
+    }
     
     // Create the saving
     const { data: saving, error } = await supabase
@@ -120,6 +148,17 @@ exports.createSaving = async (req, res) => {
     const isExceeded = totalSaved > goal.amount_to_save;
     const exceededMessage = isExceeded ? "The amount you're saving has exceeded your target." : null;
     
+    // Get updated wallet amount if save_in_wallet was true
+    let updatedWallet = null;
+    if (save_in_wallet) {
+      const { data: updatedFinances } = await supabase
+        .from('user_finances')
+        .select('wallet')
+        .eq('user_id', userId)
+        .single();
+      updatedWallet = updatedFinances?.wallet || 0;
+    }
+    
     res.status(201).json({ 
       saving: saving[0],
       goal: {
@@ -128,7 +167,12 @@ exports.createSaving = async (req, res) => {
         remaining_amount: Math.max(0, goal.amount_to_save - totalSaved),
         is_exceeded: isExceeded,
         exceeded_message: exceededMessage
-      }
+      },
+      wallet: updatedWallet ? { 
+        previous_amount: (userFinances?.wallet || 0) + amount_saved,
+        current_amount: updatedWallet,
+        deducted_amount: amount_saved
+      } : null
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
