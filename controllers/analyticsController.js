@@ -732,7 +732,8 @@ exports.getUnifiedAnalytics = async (req, res) => {
             amount: Math.round(topCategory[1] * 100) / 100
           } : null,
           budgetUtilization: Math.round(budgetUtilization * 100) / 100,
-          monthlyBudget: monthlyBudget
+          monthlyBudget: monthlyBudget,
+          walletAmount: Math.round((userFinances?.wallet || 0) * 100) / 100
         },
         
         // 9. Insights
