@@ -280,17 +280,17 @@ const runChallengeCronJob = () => {
   console.log('Challenge cron job completed');
 };
 
-// Schedule the cron job to run every night at 12 AM
+// Schedule the cron job to run every night at 12 AM SGT
 const scheduleChallengeCronJob = () => {
   cron.schedule('0 0 * * *', () => {
-    console.log('Running scheduled challenge cron job at midnight...');
+    console.log('Running scheduled challenge cron job at midnight SGT...');
     runChallengeCronJob();
   }, {
     scheduled: true,
-    timezone: "UTC" 
+    timezone: "Asia/Singapore" 
   });
   
-  console.log('Challenge cron job scheduled to run every night at 12 AM');
+  console.log('Challenge cron job scheduled to run every night at 12 AM SGT (Asia/Singapore)');
 };
 
 // Manual trigger function for testing

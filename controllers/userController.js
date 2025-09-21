@@ -208,6 +208,26 @@ exports.createUser = async (req, res) => {
     }
   }
 
+  // Create user_finances record for the new user
+  const { error: financeError } = await supabase
+    .from('user_finances')
+    .insert([
+      {
+        user_id: data[0].id,
+        monthly_income: 0,
+        wallet: 0
+      }
+    ]);
+
+  if (financeError) {
+    // If finance record creation fails, clean up the user
+    await supabase.from('users').delete().eq('id', data[0].id);
+    if (mentorId) {
+      await supabase.from('assigned_users').delete().eq('user_id', data[0].id);
+    }
+    return res.status(500).json({ error: 'Failed to create user finances record' });
+  }
+
   const emailResult = await sendAdvisorVerificationEmail(first_name, email_address, email_code);
   if (emailResult.error) {
     return res.status(500).json({ error: emailResult.error });
