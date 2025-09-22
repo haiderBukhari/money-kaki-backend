@@ -1565,8 +1565,11 @@ const generateChartData = (timeframe, startDate, endDate, usersData, revenueData
       
     case 'ytd':
     default:
-      // Year to date - show monthly data
-      for (let month = 0; month < 12; month++) {
+      // Year to date - show monthly data up to current month
+      const currentDate = new Date();
+      const maxMonth = Math.min(currentDate.getMonth(), end.getMonth());
+      
+      for (let month = 0; month <= maxMonth; month++) {
         const monthStart = new Date(start.getFullYear(), month, 1);
         const monthEnd = new Date(start.getFullYear(), month + 1, 0, 23, 59, 59, 999);
         

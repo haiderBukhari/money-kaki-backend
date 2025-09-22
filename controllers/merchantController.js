@@ -2,7 +2,7 @@ const supabase = require('../supabaseClient');
 
 // Create a new merchant
 exports.createMerchant = async (req, res) => {
-  const { image, name, discount, points, quantity, code, category, description } = req.body;
+  const { image, name, discount, points, quantity, code, category, description, location } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Name is required' });
   }
@@ -10,7 +10,7 @@ exports.createMerchant = async (req, res) => {
     const { data, error } = await supabase
       .from('merchants')
       .insert([
-        { image, name, discount, points, quantity, code, category, description }
+        { image, name, discount, points, quantity, code, category, description, location }
       ])
       .select();
     if (error) {

@@ -220,6 +220,7 @@ exports.createUser = async (req, res) => {
     ]);
 
   if (financeError) {
+    console.log(financeError)
     // If finance record creation fails, clean up the user
     await supabase.from('users').delete().eq('id', data[0].id);
     if (mentorId) {
