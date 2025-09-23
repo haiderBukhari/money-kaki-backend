@@ -98,18 +98,18 @@ exports.createSaving = async (req, res) => {
     
     const userId = req.user.id;
     
+    // Get current user finances (needed for response regardless of save_in_wallet)
+    const { data: userFinances, error: financeError } = await supabase
+      .from('user_finances')
+      .select('wallet')
+      .eq('user_id', userId)
+      .single();
+    
+    if (financeError) {
+      return res.status(500).json({ error: 'Error fetching user finances' });
+    }
+    
     if (save_in_wallet) {
-      // Get current user finances
-      const { data: userFinances, error: financeError } = await supabase
-        .from('user_finances')
-        .select('wallet')
-        .eq('user_id', userId)
-        .single();
-      
-      if (financeError) {
-        return res.status(500).json({ error: 'Error fetching user finances' });
-      }
-      
       const currentWallet = userFinances?.wallet || 0;
       
       // Deduct amount from wallet (allows negative balance)
@@ -127,7 +127,7 @@ exports.createSaving = async (req, res) => {
     // Create the saving
     const { data: saving, error } = await supabase
       .from('savings')
-      .insert({ goal_id, amount_saved, title })
+      .insert({ goal_id, amount_saved, title, save_in_wallet })
       .select('*');
     
     if (error) return res.status(500).json({ error: error.message });
@@ -194,7 +194,6 @@ exports.getSavings = async (req, res) => {
     if (goalError) return res.status(500).json({ error: goalError.message });
     if (!goal) return res.status(404).json({ error: 'Goal not found' });
     
-    // Get savings for this goal
     const { data: savings, error: savingsError } = await supabase
       .from('savings')
       .select('*')
