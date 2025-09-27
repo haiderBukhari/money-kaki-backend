@@ -225,7 +225,7 @@ exports.getSavings = async (req, res) => {
 exports.updateSaving = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount_saved, title } = req.body;
+    const { amount_saved, title, save_in_wallet } = req.body;
     if (!id) return res.status(400).json({ error: 'Saving id required' });
     
     // Get the saving to find the goal_id
@@ -240,7 +240,7 @@ exports.updateSaving = async (req, res) => {
     // Update the saving
     const { data: saving, error } = await supabase
       .from('savings')
-      .update({ amount_saved, title })
+      .update({ amount_saved, title, save_in_wallet })
       .eq('id', id)
       .select('*');
     

@@ -52,6 +52,32 @@ function generateResetCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Helper to generate a random 6-digit referral code
+function generateReferralCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// Helper to generate a unique referral code (checks for duplicates)
+async function generateUniqueReferralCode() {
+  let referral;
+  let isUnique = false;
+  
+  while (!isUnique) {
+    referral = generateReferralCode();
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('referral', referral)
+      .single();
+    
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+  
+  return referral;
+}
+
 
 
 // Helper to get full_name from first_name and last_name
@@ -81,19 +107,37 @@ exports.createUser = async (req, res) => {
 
   let mentorId = null;
   if (referal_code) {
-    const { data: mentor, error: mentorError } = await supabase
+    const { data: referrer, error: referrerError } = await supabase
       .from('users')
-      .select('id')
+      .select('id, role')
       .eq('referral', referal_code)
       .single();
 
-    if (mentorError || !mentor) {
+    if (referrerError || !referrer) {
       return res.status(400).json({ error: 'Invalid referral code' });
     }
-    mentorId = mentor.id;
+
+    // Smart referral logic
+    if (referrer.role === 'advisor') {
+      // Direct advisor referral - assign directly
+      mentorId = referrer.id;
+    } else if (referrer.role === 'user') {
+      // User referral - find their assigned advisor
+      const { data: assignedUser, error: assignedError } = await supabase
+        .from('assigned_users')
+        .select('mentor_id')
+        .eq('user_id', referrer.id)
+        .single();
+      
+      if (assignedError || !assignedUser) {
+        return res.status(400).json({ error: 'Referrer has no assigned advisor' });
+      }
+      mentorId = assignedUser.mentor_id;
+    }
   }
 
   const email_code = generateEmailCode();
+  const referral = await generateUniqueReferralCode();
 
   const { data, error } = await supabase
     .from('users')
@@ -105,6 +149,7 @@ exports.createUser = async (req, res) => {
         country_code,
         number,
         email_code,
+        referral,
         birthday_date,
         profile_picture,
         role: 'user'
@@ -723,6 +768,7 @@ exports.oauthLogin = async (req, res) => {
       .single();
 
     if (!user) {
+      const referral = await generateUniqueReferralCode();
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert([
@@ -736,7 +782,8 @@ exports.oauthLogin = async (req, res) => {
             contact_number: null,
             credits: 0,
             points: 0,
-            vocher_quantity: 0
+            vocher_quantity: 0,
+            referral
           }
         ])
         .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role');
@@ -942,7 +989,7 @@ exports.getUsersByRole = async (req, res) => {
       // Admin gets all users with role 'user' only
       const { data, error } = await supabase
         .from('users')
-        .select('id, first_name, last_name, email_address, country_code, number, points')
+        .select('id, first_name, last_name, email_address, country_code, number, points, birthday_date')
         .eq('role', 'user')
         .order('created_at', { ascending: false });
 
@@ -1016,6 +1063,7 @@ exports.getUsersByRole = async (req, res) => {
         contact_number: user.country_code + " " + user.number,
         income: financesMap[user.id]?.monthly_income || 0,
         expense: financesMap[user.id]?.monthly_expense || 0,
+        birthday_date: user.birthday_date,
         points: user.points,
         vocher: voucherMap[user.id] || 0,
         advisor: advisorMap[user.id] || 'Not Assigned'
@@ -1034,6 +1082,7 @@ exports.getUsersByRole = async (req, res) => {
             last_name,
             email_address,
             country_code,
+            birthday_date,
             number,
             points
           )
@@ -1086,6 +1135,7 @@ exports.getUsersByRole = async (req, res) => {
         contact_number: assignment.users.country_code + " " + assignment.users.number,
         income: financesMap[assignment.users.id]?.monthly_income || 0,
         expense: financesMap[assignment.users.id]?.monthly_expense || 0,
+        birthday_date: assignment.users.birthday_date,
         points: assignment.users?.points,
         vocher: voucherMap[assignment.users.id] || 0,
         advisor: 'You' // Since this is the advisor's view, they are the advisor for these users

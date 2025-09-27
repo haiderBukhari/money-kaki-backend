@@ -25,6 +25,27 @@ function generateReferralCode() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
+// Helper to generate a unique referral code (checks for duplicates)
+async function generateUniqueReferralCode() {
+  let referral;
+  let isUnique = false;
+  
+  while (!isUnique) {
+    referral = generateReferralCode();
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('referral', referral)
+      .single();
+    
+    if (!existing) {
+      isUnique = true;
+    }
+  }
+  
+  return referral;
+}
+
 exports.createAdvisor = async (req, res) => {
   const { full_name, email_address, contact_number } = req.body;
   if (!full_name || !email_address || !contact_number) {
@@ -43,7 +64,7 @@ exports.createAdvisor = async (req, res) => {
   }
 
   const email_code = generateEmailCode();
-  const referral = generateReferralCode();
+  const referral = await generateUniqueReferralCode();
 
   // Insert new advisor
   const { data, error } = await supabase
