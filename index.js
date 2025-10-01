@@ -35,6 +35,19 @@ app.use('/api/privacy-policy', privacyPolicyRoutes);
 app.use('/api/terms-conditions', termsConditionsRoutes);
 app.use('/api/goals-savings', require('./routes/goals'));
 app.use('/api/analytics', analyticsRoutes);
+app.get('/referral/:code', (req, res) => {
+  const referralCode = req.params.code;
+
+  const ua = req.headers['user-agent'];
+  if (/iPhone|iPad|iPod/i.test(ua)) {
+    return res.redirect('https://apps.apple.com/us/app/moneykakis/id6748995138?platform=iphone');
+  } else if (/Android/i.test(ua)) {
+    return res.redirect('https://play.google.com/store/apps/details?id=com.finance.moneykakis'); // once live
+  } else {
+    // Optional: show a landing page
+    return res.send('Open this link on your phone to install the MoneyKakis app.');
+  }
+});
 
 // Initialize cron jobs
 scheduleChallengeCronJob();
