@@ -66,7 +66,6 @@ exports.createAdvisor = async (req, res) => {
   const email_code = generateEmailCode();
   const referral = await generateUniqueReferralCode();
 
-  // Insert new advisor
   const { data, error } = await supabase
     .from('users')
     .insert([
@@ -425,6 +424,8 @@ exports.oauthLogin = async (req, res) => {
       .single();
 
     if (!advisor) {
+      const referral = await generateUniqueReferralCode();
+
       const { data: newAdvisor, error: createError } = await supabase
         .from('users')
         .insert([
