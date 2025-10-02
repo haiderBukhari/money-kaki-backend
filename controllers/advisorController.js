@@ -66,6 +66,7 @@ exports.createAdvisor = async (req, res) => {
   const email_code = generateEmailCode();
   const referral = await generateUniqueReferralCode();
 
+  // Insert new advisor
   const { data, error } = await supabase
     .from('users')
     .insert([
@@ -439,7 +440,8 @@ exports.oauthLogin = async (req, res) => {
             contact_number: null,
             credits: 0,
             points: 0,
-            vocher_quantity: 0
+            vocher_quantity: 0,
+            referral
           }
         ])
         .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role');
