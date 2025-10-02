@@ -444,7 +444,7 @@ exports.oauthLogin = async (req, res) => {
             referral
           }
         ])
-        .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role');
+        .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role, referral');
 
       if (createError) {
         return res.status(500).json({ error: 'Error creating advisor account' });
