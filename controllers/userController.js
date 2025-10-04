@@ -838,7 +838,7 @@ exports.oauthLogin = async (req, res) => {
 
     let { data: user } = await supabase
       .from('users')
-      .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role')
+      .select('id, first_name, last_name, full_name, email_address, country_code, number, contact_number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password, birthday_date')
       .eq('email_address', email)
       .eq('role', 'user')
       .single();
@@ -881,6 +881,8 @@ exports.oauthLogin = async (req, res) => {
         .from('users')
         .insert([
           {
+            first_name: given_name,
+            last_name: family_name,
             full_name: `${given_name} ${family_name}`,
             email_address: email,
             profile_picture: picture,
@@ -888,13 +890,17 @@ exports.oauthLogin = async (req, res) => {
             status: 'inactive',
             auth_source: 'google',
             contact_number: null,
+            country_code: null,
+            number: null,
             credits: 0,
-            points: 0,
+            points: 50,
             vocher_quantity: 0,
+            password: null,
+            birthday_date: null,
             referral
           }
         ])
-        .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role');
+        .select('id, first_name, last_name, full_name, email_address, country_code, number, contact_number, status, credits, points, profile_picture, vocher_quantity, role, auth_source, password, birthday_date');
 
       if (createError) {
         return res.status(500).json({ error: 'Error creating user account' });
@@ -933,6 +939,7 @@ exports.oauthLogin = async (req, res) => {
     );
 
     res.json({
+      message: 'Login successful',
       user,
       token,
       role: 'user'
