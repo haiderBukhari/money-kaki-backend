@@ -740,36 +740,37 @@ exports.getRole = async (req, res) => {
 };
 
 exports.oauthLogin = async (req, res) => {
-  const { credential, redirect_uri, referal_code } = req.body;
+  const { credential, referal_code } = req.body;
 
   if (!credential) {
-    return res.status(400).json({ error: 'Credential is required' });
+    return res.status(400).json({ error: 'Credential (ID token) is required' });
   }
 
   try {
-    const { tokens } = await client.getToken({
-      code: credential,
-      redirect_uri: redirect_uri
+    // ✅ Verify ID token (works for both Android + iOS)
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: [
+        process.env.OAUTH_CLIENT_ID_ANDROID,
+        process.env.OAUTH_CLIENT_ID_IOS
+      ],
     });
 
-    const ticket = await client.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: process.env.OAUTH_CLIENT_ID
-    });
-    
     const payload = ticket.getPayload();
     const { email, given_name, family_name, picture } = payload;
 
-    let { data: user, error: findError } = await supabase
+    let { data: user } = await supabase
       .from('users')
       .select('id, full_name, email_address, contact_number, status, credits, points, profile_picture, vocher_quantity, role')
       .eq('email_address', email)
       .eq('role', 'user')
       .single();
 
+    // 🧠 Create new user if doesn't exist
     if (!user) {
-      // Handle referral code logic
       let mentorId = null;
+
+      // Handle referral code logic (optional)
       if (referal_code) {
         const { data: referrer, error: referrerError } = await supabase
           .from('users')
@@ -781,21 +782,19 @@ exports.oauthLogin = async (req, res) => {
           return res.status(400).json({ error: 'Invalid referral code' });
         }
 
-        // Smart referral logic
         if (referrer.role === 'advisor') {
-          // Direct advisor referral - assign directly
           mentorId = referrer.id;
         } else if (referrer.role === 'user') {
-          // User referral - find their assigned advisor
-          const { data: assignedUser, error: assignedError } = await supabase
+          const { data: assignedUser } = await supabase
             .from('assigned_users')
             .select('mentor_id')
             .eq('user_id', referrer.id)
             .single();
-          
-          if (assignedError || !assignedUser) {
+
+          if (!assignedUser) {
             return res.status(400).json({ error: 'Referrer has no assigned advisor' });
           }
+
           mentorId = assignedUser.mentor_id;
         }
       }
@@ -823,121 +822,31 @@ exports.oauthLogin = async (req, res) => {
       if (createError) {
         return res.status(500).json({ error: 'Error creating user account' });
       }
+
       user = newUser[0];
 
-      // Handle mentor assignment
+      // Assign mentor (either referral or least assigned)
       if (mentorId) {
-        const { error: assignmentError } = await supabase
-          .from('assigned_users')
-          .insert([
-            {
-              mentor_id: mentorId,
-              user_id: user.id
-            }
-          ]);
-
-        if (assignmentError) {
-          await supabase.from('users').delete().eq('id', user.id);
-          return res.status(500).json({ error: 'Failed to create user assignment' });
-        }
-
-        // Increment total_assigned for the advisor (referral assignment)
-        const { data: advisor, error: advisorFetchError } = await supabase
-          .from('users')
-          .select('total_assigned')
-          .eq('id', mentorId)
-          .single();
-
-        if (advisorFetchError) {
-          // If we can't fetch advisor data, clean up the assignment
-          await supabase.from('assigned_users').delete().eq('user_id', user.id);
-          await supabase.from('users').delete().eq('id', user.id);
-          return res.status(500).json({ error: 'Failed to fetch advisor data' });
-        }
-
-        const newTotalAssigned = (advisor.total_assigned || 0) + 1;
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({ total_assigned: newTotalAssigned })
-          .eq('id', mentorId);
-
-        if (updateError) {
-          await supabase.from('assigned_users').delete().eq('user_id', user.id);
-          await supabase.from('users').delete().eq('id', user.id);
-          return res.status(500).json({ error: 'Failed to update advisor assignment count' });
-        }
+        await assignUserToMentor(user.id, mentorId);
       } else {
-        // Auto-assign to advisor with least users
-        const { data: advisors, error: advisorError } = await supabase
-          .from('users')
-          .select('id, total_assigned, created_at')
-          .eq('role', 'advisor')
-          .eq('status', 'active')
-          .order('total_assigned', { ascending: true })
-          .order('created_at', { ascending: true });
-
-        if (advisorError) {
-          await supabase.from('users').delete().eq('id', user.id);
-          return res.status(500).json({ error: 'Failed to find available advisors' });
-        }
-
-        if (advisors && advisors.length > 0) {
-          const selectedAdvisor = advisors[0];
-
-          const { error: assignmentError } = await supabase
-            .from('assigned_users')
-            .insert([
-              {
-                mentor_id: selectedAdvisor.id,
-                user_id: user.id
-              }
-            ]);
-
-          if (assignmentError) {
-            await supabase.from('users').delete().eq('id', user.id);
-            return res.status(500).json({ error: 'Failed to create automatic user assignment' });
-          }
-
-          // Increment total_assigned for the selected advisor
-          const newTotalAssigned = (selectedAdvisor.total_assigned || 0) + 1;
-          const { error: updateError } = await supabase
-            .from('users')
-            .update({ total_assigned: newTotalAssigned })
-            .eq('id', selectedAdvisor.id);
-
-          if (updateError) {
-            // If update fails, we should clean up the assignment
-            await supabase.from('assigned_users').delete().eq('user_id', user.id);
-            await supabase.from('users').delete().eq('id', user.id);
-            return res.status(500).json({ error: 'Failed to update advisor assignment count' });
-          }
-        }
+        await autoAssignUserToAdvisor(user.id);
       }
 
-      // Create user_finances record for the new user
+      // Create finance record
       const { error: financeError } = await supabase
         .from('user_finances')
-        .insert([
-          {
-            user_id: user.id,
-            monthly_income: 0,
-            wallet: 0
-          }
-        ]);
+        .insert([{ user_id: user.id, monthly_income: 0, wallet: 0 }]);
 
       if (financeError) {
-        console.log(financeError);
-        // If finance record creation fails, clean up the user
+        console.error(financeError);
         await supabase.from('users').delete().eq('id', user.id);
-        if (mentorId) {
-          await supabase.from('assigned_users').delete().eq('user_id', user.id);
-        }
         return res.status(500).json({ error: 'Failed to create user finances record' });
       }
     }
 
+    // ✅ Generate JWT token
     const token = jwt.sign(
-      { 
+      {
         id: user.id,
         role: 'user',
         email: user.email_address
@@ -954,9 +863,9 @@ exports.oauthLogin = async (req, res) => {
 
   } catch (error) {
     console.error('Google OAuth login error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Error during Google authentication',
-      details: error.response?.data || error.message 
+      details: error.message
     });
   }
 };
