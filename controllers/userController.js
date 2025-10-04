@@ -6,11 +6,8 @@ const AWS = require('aws-sdk');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
 
-const client = new OAuth2Client(
-  process.env.OAUTH_CLIENT_ID,
-  process.env.OAUTH_CLIENT_SECRET,
-  process.env.REDIRECT_URI
-);
+// Initialize OAuth client without credentials for ID token verification
+const client = new OAuth2Client();
 
 // Configure AWS with environment variables
 AWS.config.update({
@@ -78,7 +75,90 @@ async function generateUniqueReferralCode() {
   return referral;
 }
 
+// Helper function to assign user to a specific mentor
+async function assignUserToMentor(userId, mentorId) {
+  const { error: assignmentError } = await supabase
+    .from('assigned_users')
+    .insert([
+      {
+        mentor_id: mentorId,
+        user_id: userId
+      }
+    ]);
 
+  if (assignmentError) {
+    throw new Error('Failed to create user assignment');
+  }
+
+  // Increment total_assigned for the advisor
+  const { data: advisor, error: advisorFetchError } = await supabase
+    .from('users')
+    .select('total_assigned')
+    .eq('id', mentorId)
+    .single();
+
+  if (advisorFetchError) {
+    // Clean up the assignment if we can't fetch advisor data
+    await supabase.from('assigned_users').delete().eq('user_id', userId);
+    throw new Error('Failed to fetch advisor data');
+  }
+
+  const newTotalAssigned = (advisor.total_assigned || 0) + 1;
+  const { error: updateError } = await supabase
+    .from('users')
+    .update({ total_assigned: newTotalAssigned })
+    .eq('id', mentorId);
+
+  if (updateError) {
+    await supabase.from('assigned_users').delete().eq('user_id', userId);
+    throw new Error('Failed to update advisor assignment count');
+  }
+}
+
+// Helper function to auto-assign user to advisor with least users
+async function autoAssignUserToAdvisor(userId) {
+  const { data: advisors, error: advisorError } = await supabase
+    .from('users')
+    .select('id, total_assigned, created_at')
+    .eq('role', 'advisor')
+    .eq('status', 'active')
+    .order('total_assigned', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (advisorError) {
+    throw new Error('Failed to find available advisors');
+  }
+
+  if (advisors && advisors.length > 0) {
+    const selectedAdvisor = advisors[0];
+
+    const { error: assignmentError } = await supabase
+      .from('assigned_users')
+      .insert([
+        {
+          mentor_id: selectedAdvisor.id,
+          user_id: userId
+        }
+      ]);
+
+    if (assignmentError) {
+      throw new Error('Failed to create automatic user assignment');
+    }
+
+    // Increment total_assigned for the selected advisor
+    const newTotalAssigned = (selectedAdvisor.total_assigned || 0) + 1;
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ total_assigned: newTotalAssigned })
+      .eq('id', selectedAdvisor.id);
+
+    if (updateError) {
+      // If update fails, clean up the assignment
+      await supabase.from('assigned_users').delete().eq('user_id', userId);
+      throw new Error('Failed to update advisor assignment count');
+    }
+  }
+}
 
 // Helper to get full_name from first_name and last_name
 function getFullName(user) {
@@ -750,10 +830,7 @@ exports.oauthLogin = async (req, res) => {
     // ✅ Verify ID token (works for both Android + iOS)
     const ticket = await client.verifyIdToken({
       idToken: credential,
-      audience: [
-        process.env.OAUTH_CLIENT_ID_ANDROID,
-        process.env.OAUTH_CLIENT_ID_IOS
-      ],
+      requiredAudience: process.env.OAUTH_CLIENT_ID || process.env.OAUTH_CLIENT_ID_ANDROID,
     });
 
     const payload = ticket.getPayload();
